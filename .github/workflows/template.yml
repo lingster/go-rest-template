@@ -1,0 +1,55 @@
+# Tests the project generator (copier.yml + scripts/init_project.py).
+# Template-only: init_project.py deletes this file from generated projects.
+name: Template generator
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "copier.yml"
+      - ".github/workflows/template.yml"
+
+concurrency:
+  group: template-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    name: Generate a project with copier
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - uses: astral-sh/setup-uv@v6
+      - name: Install bee
+        run: go install github.com/beego/bee/v2@latest
+      - name: Unit tests for init_project.py
+        run: python3 -m unittest discover -s scripts -v
+      - name: Generate a project with copier
+        run: >-
+          uvx copier copy --trust --defaults --vcs-ref HEAD
+          --data "project_name=6-Pack App" --data github_owner=acme
+          . "$RUNNER_TEMP/generated"
+      - name: Generated project has no template names left
+        working-directory: ${{ runner.temp }}/generated
+        run: |
+          if grep -rIn -E "go-rest-template|Go REST Template|SaaS Starter|saas_app|saasApp|saas-webapp|com\.example" .; then
+            echo "::error::template names left in generated project"; exit 1
+          fi
+          test ! -e scripts && test ! -e copier.yml && test ! -e .github/workflows/template.yml
+      - name: Generated backend passes vet, tests and swagger check
+        working-directory: ${{ runner.temp }}/generated/backend
+        run: |
+          go vet ./... && go test ./...
+          git init -q && git add -A && make docs && git diff --exit-code -- swagger routers

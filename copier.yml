@@ -1,0 +1,97 @@
+# Copier config: generate a new project from this template.
+#
+#   uvx copier copy --trust gh:lingster/go-rest-template my-app
+#
+# Files are copied verbatim (the template is real, buildable code); the
+# post-copy task runs scripts/init_project.py to rename everything.
+# --trust is required because the template runs that task.
+
+_min_copier_version: "9.0.0"
+_templates_suffix: .jinja
+_exclude:
+  - copier.yml
+  - .git
+  - "**/node_modules"
+  - "**/.dart_tool"
+  - "**/build"
+  - "**/.svelte-kit"
+  - "**/.wrangler"
+  - "backend/bin"
+  - "backend/data"
+  - "**/__pycache__"
+  - ".DS_Store"
+
+project_name:
+  type: str
+  help: Display name of your app (API title, webapp header, WebAuthn RP name)
+  default: My SaaS App
+
+project_slug:
+  type: str
+  help: Repository / project slug (lowercase, digits, dashes)
+  default: "{{ project_name | lower | replace(' ', '-') }}"
+  validator: >-
+    {% if not (project_slug | regex_search('^[a-z0-9][a-z0-9-]*$')) %}Use lowercase letters, digits and dashes{% endif %}
+
+github_owner:
+  type: str
+  help: GitHub user or organisation that will own the repo
+  default: lingster
+
+go_module:
+  type: str
+  help: Go module path for the backend
+  default: "github.com/{{ github_owner }}/{{ project_slug }}/backend"
+
+dart_package:
+  type: str
+  help: Flutter/Dart package name (must start with a letter)
+  default: "{% if project_slug[:1] in '0123456789' %}{{ ['zero','one','two','three','four','five','six','seven','eight','nine'][project_slug[:1] | int] }}{{ project_slug[1:] | replace('-', '_') }}{% else %}{{ project_slug | replace('-', '_') }}{% endif %}"
+  validator: >-
+    {% if not (dart_package | regex_search('^[a-z][a-z0-9_]*$')) %}Lowercase, start with a letter, letters/digits/underscores only{% endif %}
+
+bundle_id:
+  type: str
+  help: Android application id and iOS bundle id (reverse DNS)
+  default: "com.{{ github_owner | lower | replace('-', '') }}.{{ dart_package | replace('_', '') }}"
+  validator: >-
+    {% if not (bundle_id | regex_search('^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*){2,}$')) %}Reverse DNS like com.acme.app; each part starts with a letter{% endif %}
+
+worker_name:
+  type: str
+  help: Cloudflare Worker name for the webapp
+  default: "{{ dart_package | replace('_', '-') }}"
+
+author:
+  type: str
+  help: Copyright holder for LICENSE
+  default: Ling LI
+
+author_email:
+  type: str
+  help: API contact email (shown in swagger)
+  default: ling@aidraw.ai
+
+_tasks:
+  - command:
+      - python3
+      - scripts/init_project.py
+      - --yes
+      - --name
+      - "{{ project_name }}"
+      - --slug
+      - "{{ project_slug }}"
+      - --owner
+      - "{{ github_owner }}"
+      - --go-module
+      - "{{ go_module }}"
+      - --dart-package
+      - "{{ dart_package }}"
+      - --bundle-id
+      - "{{ bundle_id }}"
+      - --worker
+      - "{{ worker_name }}"
+      - --author
+      - "{{ author }}"
+      - --email
+      - "{{ author_email }}"

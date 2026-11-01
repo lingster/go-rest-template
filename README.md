@@ -46,17 +46,48 @@ cd webapp && npm ci && npm run dev
 
 Swagger UI: http://localhost:8080/swagger/
 
+<!-- template-only:start -->
 ## Using this template
 
-1. Click **Use this template** on GitHub and create your repository.
-2. Work through this checklist of renames and settings:
-   - [ ] Go module path in `backend/go.mod` and all imports (also `.goreleaser.yaml` ldflags if you rename `main` variables)
-   - [ ] Flutter package name and Android application id / iOS bundle id
-   - [ ] Worker `name` in `webapp/wrangler.*`
-   - [ ] `JWT_SECRET` (long random value, unique per environment)
-   - [ ] WebAuthn RP ID and allowed origins to your real domain(s)
-   - [ ] Cloudflare secrets and repository variables (see below)
-   - [ ] Update `LICENSE` copyright holder
+There are two ways to start a new project. Both rename the Go module, app name, Flutter package and
+bundle id, Cloudflare worker, LICENSE author and API contact email, move the Android `MainActivity`
+and regenerate the swagger docs.
+
+### Option A: Copier (recommended)
+
+```bash
+uvx copier copy --trust gh:lingster/go-rest-template my-app   # or: pipx run copier copy --trust ...
+cd my-app && git init && git add -A && git commit -m "chore: initialise project from template"
+```
+
+Copier asks for the project name, slug, GitHub owner, Go module, Dart package, bundle id, worker name,
+author and email (sensible defaults are derived from the name, e.g. `6-Pack App` gives
+`six_pack_app` and `com.<owner>.sixpackapp`). `--trust` is needed because the template runs
+`scripts/init_project.py` after copying. Add `--vcs-ref main` to use the latest `main` instead of the
+latest release tag.
+
+### Option B: GitHub "Use this template"
+
+1. Click **Use this template** on GitHub, create your repository and clone it.
+2. Run the init script from the repo root (Python 3 standard library only):
+
+   ```bash
+   python3 scripts/init_project.py                       # interactive prompts
+   python3 scripts/init_project.py --name "6-Pack App" --owner acme --yes   # or with flags
+   ```
+
+   `--dry-run` shows what would change. The script removes itself and `copier.yml` when done. Install
+   `bee` (`go install github.com/beego/bee/v2@latest`) first so it can regenerate swagger, or run
+   `make docs` in `backend/` afterwards.
+
+<!-- template-only:end -->
+## Before deploying
+
+For every environment, set:
+
+- [ ] `JWT_SECRET` (long random value, unique per environment)
+- [ ] WebAuthn RP ID and allowed origins for your real domain(s)
+- [ ] Cloudflare secrets and repository variables (see below)
 
 ## CI/CD
 
