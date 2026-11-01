@@ -9,6 +9,7 @@ import '../../../shared/validators.dart';
 import '../../../shared/widgets/app_text_field.dart';
 import '../../../shared/widgets/banners.dart';
 import '../../../shared/widgets/password_field.dart';
+import '../../auth/application/auth_controller.dart';
 import '../application/security_providers.dart';
 import '../data/security_repository.dart';
 import 'recovery_codes_view.dart';
@@ -185,6 +186,12 @@ class DisableTotpDialog extends ConsumerStatefulWidget {
 
 class _DisableTotpDialogState extends ConsumerState<DisableTotpDialog>
     with AsyncActionMixin<DisableTotpDialog> {
+  /// Google-created accounts have no password: the code alone is required.
+  bool get _hasPassword {
+    final auth = ref.read(authControllerProvider);
+    return auth is! Authenticated || auth.user.hasPassword;
+  }
+
   final _formKey = GlobalKey<FormState>();
   final _password = TextEditingController();
   final _code = TextEditingController();
@@ -201,7 +208,10 @@ class _DisableTotpDialogState extends ConsumerState<DisableTotpDialog>
     final ok = await runAction(
       () => ref
           .read(securityRepositoryProvider)
-          .disableTotp(password: _password.text, code: _code.text.trim()),
+          .disableTotp(
+            password: _hasPassword ? _password.text : null,
+            code: _code.text.trim(),
+          ),
     );
     if (ok && mounted) Navigator.of(context).pop(true);
   }
@@ -222,12 +232,14 @@ class _DisableTotpDialogState extends ConsumerState<DisableTotpDialog>
                   ErrorBanner(message: errorText!),
                   const SizedBox(height: 12),
                 ],
-                PasswordField(
-                  controller: _password,
-                  label: 'Password',
-                  validator: (v) => Validators.required(v, 'Password'),
-                ),
-                const SizedBox(height: 12),
+                if (_hasPassword) ...[
+                  PasswordField(
+                    controller: _password,
+                    label: 'Password',
+                    validator: (v) => Validators.required(v, 'Password'),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 AppTextField(
                   controller: _code,
                   label: 'Authenticator code',

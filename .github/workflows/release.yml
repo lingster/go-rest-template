@@ -65,9 +65,9 @@ jobs:
       # keystore as a secret, decode it here and reference it from
       # android/key.properties (see flutter_app/README.md).
       - name: Build web
-        run: flutter build web --release --dart-define=API_BASE_URL=${{ vars.API_BASE_URL }}
+        run: flutter build web --release --dart-define=API_BASE_URL=${{ vars.API_BASE_URL }} --dart-define=GOOGLE_SERVER_CLIENT_ID=${{ vars.GOOGLE_SERVER_CLIENT_ID }} --dart-define=GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
       - name: Build APK
-        run: flutter build apk --release --dart-define=API_BASE_URL=${{ vars.API_BASE_URL }}
+        run: flutter build apk --release --dart-define=API_BASE_URL=${{ vars.API_BASE_URL }} --dart-define=GOOGLE_SERVER_CLIENT_ID=${{ vars.GOOGLE_SERVER_CLIENT_ID }} --dart-define=GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
       - name: Package and upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -88,6 +88,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+      PUBLIC_GOOGLE_SIGNIN: ${{ vars.PUBLIC_GOOGLE_SIGNIN }}
     defaults:
       run:
         working-directory: webapp

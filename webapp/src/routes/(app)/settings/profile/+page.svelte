@@ -1,4 +1,5 @@
 <script lang="ts">
+	import * as authApi from '#lib/api/auth.ts';
 	import * as meApi from '#lib/api/me.ts';
 	import Alert from '#lib/components/Alert.svelte';
 	import Button from '#lib/components/Button.svelte';
@@ -33,6 +34,23 @@
 			nameError = errorMessage(err);
 		} finally {
 			nameLoading = false;
+		}
+	}
+
+	let setupLoading = $state(false);
+	let setupMessage = $state('');
+	let setupError = $state('');
+
+	/** Password-less (Google) accounts set a password via the emailed reset link. */
+	async function sendPasswordSetupEmail() {
+		setupLoading = true;
+		setupMessage = setupError = '';
+		try {
+			setupMessage = (await authApi.forgotPassword(session.user?.email ?? '')).message;
+		} catch (err) {
+			setupError = errorMessage(err);
+		} finally {
+			setupLoading = false;
 		}
 	}
 
@@ -79,36 +97,54 @@
 		</form>
 	</Card>
 
-	<Card title="Change password">
-		<form class="space-y-4" onsubmit={changePassword} novalidate>
-			{#if pwError}<Alert variant="error">{pwError}</Alert>{/if}
-			{#if pwOk}<Alert variant="success">{pwOk}</Alert>{/if}
-			<PasswordField
-				id="current"
-				label="Current password"
-				autocomplete="current-password"
-				required
-				bind:value={current}
-				error={pwErrors.current_password}
-			/>
-			<PasswordField
-				id="new"
-				label="New password"
-				autocomplete="new-password"
-				required
-				hint="8 to 128 characters."
-				bind:value={next}
-				error={pwErrors.new_password}
-			/>
-			<PasswordField
-				id="confirm"
-				label="Confirm new password"
-				autocomplete="new-password"
-				required
-				bind:value={confirm}
-				error={pwErrors.confirm}
-			/>
-			<Button type="submit" loading={pwLoading}>Change password</Button>
-		</form>
-	</Card>
+	{#if session.user && !session.user.has_password}
+		<Card
+			title="Set a password"
+			description="You signed in with Google, so this account has no password yet."
+		>
+			<div class="space-y-4">
+				{#if setupError}<Alert variant="error">{setupError}</Alert>{/if}
+				{#if setupMessage}<Alert variant="success">{setupMessage}</Alert>{/if}
+				<p class="text-sm">
+					We will email a link to {session.user.email} that lets you choose a password.
+				</p>
+				<Button loading={setupLoading} onclick={sendPasswordSetupEmail}>
+					Email me a password link
+				</Button>
+			</div>
+		</Card>
+	{:else}
+		<Card title="Change password">
+			<form class="space-y-4" onsubmit={changePassword} novalidate>
+				{#if pwError}<Alert variant="error">{pwError}</Alert>{/if}
+				{#if pwOk}<Alert variant="success">{pwOk}</Alert>{/if}
+				<PasswordField
+					id="current"
+					label="Current password"
+					autocomplete="current-password"
+					required
+					bind:value={current}
+					error={pwErrors.current_password}
+				/>
+				<PasswordField
+					id="new"
+					label="New password"
+					autocomplete="new-password"
+					required
+					hint="8 to 128 characters."
+					bind:value={next}
+					error={pwErrors.new_password}
+				/>
+				<PasswordField
+					id="confirm"
+					label="Confirm new password"
+					autocomplete="new-password"
+					required
+					bind:value={confirm}
+					error={pwErrors.confirm}
+				/>
+				<Button type="submit" loading={pwLoading}>Change password</Button>
+			</form>
+		</Card>
+	{/if}
 </div>

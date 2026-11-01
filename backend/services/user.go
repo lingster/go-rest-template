@@ -16,12 +16,13 @@ import (
 type UserService struct {
 	users    repositories.UserRepository
 	passkeys repositories.WebAuthnCredentialRepository
+	idents   repositories.IdentityRepository
 	audit    *AuditService
 }
 
 func NewUserService(users repositories.UserRepository, passkeys repositories.WebAuthnCredentialRepository,
-	audit *AuditService) *UserService {
-	return &UserService{users: users, passkeys: passkeys, audit: audit}
+	idents repositories.IdentityRepository, audit *AuditService) *UserService {
+	return &UserService{users: users, passkeys: passkeys, idents: idents, audit: audit}
 }
 
 // Get loads a user, mapping missing rows to not_found.
@@ -33,8 +34,11 @@ func (s *UserService) Get(id string) (*models.User, error) {
 	return u, err
 }
 
-func toDTO(u *models.User, passkeys int64) dto.User {
-	return dto.User{
+func toDTO(u *models.User, passkeys int64, identities []string) dto.User {
+	if identities == nil {
+		identities = []string{}
+	}
+	return dto.User{HasPassword: u.HasPassword(), Identities: identities,
 		ID: u.ID, Email: u.Email, Name: u.Name, Role: u.Role, EmailVerified: u.EmailVerified,
 		IsActive: u.IsActive, TOTPEnabled: u.TOTPEnabled, PasskeyCount: int(passkeys),
 		CreatedAt: formatTime(u.CreatedAt), UpdatedAt: formatTime(u.UpdatedAt),
@@ -47,7 +51,11 @@ func (s *UserService) Present(u *models.User) (dto.User, error) {
 	if err != nil {
 		return dto.User{}, err
 	}
-	return toDTO(u, n), nil
+	prov, err := s.idents.ProvidersByUsers([]string{u.ID})
+	if err != nil {
+		return dto.User{}, err
+	}
+	return toDTO(u, n, prov[u.ID]), nil
 }
 
 // PresentMany converts several users with a single passkey-count query.
@@ -60,9 +68,13 @@ func (s *UserService) PresentMany(users []*models.User) ([]dto.User, error) {
 	if err != nil {
 		return nil, err
 	}
+	prov, err := s.idents.ProvidersByUsers(ids)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]dto.User, len(users))
 	for i, u := range users {
-		out[i] = toDTO(u, counts[u.ID])
+		out[i] = toDTO(u, counts[u.ID], prov[u.ID])
 	}
 	return out, nil
 }

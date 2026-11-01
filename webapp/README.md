@@ -41,6 +41,8 @@ The API must allow the webapp origin: set `CORS_ALLOWED_ORIGINS=http://localhost
 | ---------------- | ----------------------- | ----------------------------------------------------------------- |
 | `PUBLIC_API_URL` | `http://localhost:8080` | API origin, without `/api/v1`. **Read at build time** (see below) |
 
+| `PUBLIC_GOOGLE_SIGNIN` | `false` | `true` adds Google Identity Services to the CSP (build time) |
+
 `PUBLIC_API_URL` is inlined into the client bundle by Vite and is also used to generate the
 `connect-src` directive of the Content Security Policy (`vite.config.ts`). It therefore has to be set
 when building, not only when running:

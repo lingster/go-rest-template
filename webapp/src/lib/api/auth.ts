@@ -4,6 +4,7 @@ import type {
 	LoginResponse,
 	MessageResponse,
 	PasskeyCeremony,
+	Providers,
 	RegisterResponse,
 	Tokens
 } from './types.ts';
@@ -41,3 +42,8 @@ export const passkeyLoginBegin = (email?: string) =>
 
 export const passkeyLoginFinish = (body: { session_id: string; credential: unknown }) =>
 	post<AuthResponse>('/auth/passkey/login/finish', body);
+
+export const providers = () =>
+	api.request<Providers>('/auth/providers', { method: 'GET', auth: false });
+
+export const googleLogin = (id_token: string) => post<LoginResponse>('/auth/google', { id_token });

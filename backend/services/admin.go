@@ -120,7 +120,7 @@ func (s *AdminService) DeleteUser(ctx context.Context, actor *models.User, id st
 	}
 	for _, del := range []func(string) error{
 		s.repos.RefreshTokens.DeleteByUser, s.repos.OneTime.DeleteByUser, s.repos.Recovery.DeleteByUser,
-		s.repos.Passkeys.DeleteByUser, s.repos.Users.Delete,
+		s.repos.Passkeys.DeleteByUser, s.repos.Identities.DeleteByUser, s.repos.Users.Delete,
 	} {
 		if err := del(u.ID); err != nil {
 			return err

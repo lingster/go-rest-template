@@ -49,6 +49,34 @@ func (c *AuthController) Login() {
 	c.loginReply(res, err)
 }
 
+// Providers lists enabled external sign-in providers
+// @Title Providers
+// @Description Public configuration so clients know whether to show "Continue with Google". web_client_id is not a secret.
+// @Success 200 {object} dto.ProvidersResponse
+// @router /providers [get]
+func (c *AuthController) Providers() {
+	c.OK(c.C.Auth.Providers())
+}
+
+// LoginGoogle signs in with a Google ID token
+// @Title LoginGoogle
+// @Description Verifies a Google ID token server-side. Creates the account, or links it to an existing account with the same Google-verified email. Returns an AuthResponse, or an MfaChallenge (mfa_required=true) when TOTP is enabled: Google never bypasses 2FA. Disabled (404 google_signin_disabled) unless GOOGLE_CLIENT_IDS is set.
+// @Param	body	body	dto.GoogleLoginRequest	true	"Google ID token"
+// @Success 200 {object} dto.AuthResponse
+// @Failure 401 invalid_token
+// @Failure 403 account_disabled
+// @Failure 404 google_signin_disabled
+// @Failure 429 rate_limited
+// @router /google [post]
+func (c *AuthController) LoginGoogle() {
+	var req dto.GoogleLoginRequest
+	if !c.Decode(&req) {
+		return
+	}
+	res, err := c.C.Auth.LoginGoogle(c.ReqContext(), req.IDToken)
+	c.loginReply(res, err)
+}
+
 // LoginMFA completes a 2FA login
 // @Title LoginMFA
 // @Description Exchange the mfa_token plus a TOTP or recovery code for a session.

@@ -24,6 +24,8 @@
 	let notice = $state('');
 
 	const enabled = $derived(session.user?.totp_enabled ?? false);
+	// Google-created accounts have no password: the authentication code alone confirms disabling.
+	const hasPassword = $derived(session.user?.has_password ?? true);
 
 	function reset(next: Mode = 'idle') {
 		mode = next;
@@ -68,7 +70,10 @@
 	const disable = (e: SubmitEvent) => {
 		e.preventDefault();
 		return run(async () => {
-			await meApi.totpDisable({ password, code: code.trim() });
+			await meApi.totpDisable({
+				password: hasPassword ? password : undefined,
+				code: code.trim()
+			});
 			await session.refreshUser();
 			reset();
 			notice = 'Two-factor authentication disabled.';
@@ -119,13 +124,15 @@
 			</form>
 		{:else if mode === 'disable'}
 			<form class="space-y-4" onsubmit={disable}>
-				<PasswordField
-					id="dis-password"
-					label="Password"
-					autocomplete="current-password"
-					required
-					bind:value={password}
-				/>
+				{#if hasPassword}
+					<PasswordField
+						id="dis-password"
+						label="Password"
+						autocomplete="current-password"
+						required
+						bind:value={password}
+					/>
+				{/if}
 				<FormField
 					id="dis-code"
 					label="Authentication code"

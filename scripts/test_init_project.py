@@ -41,6 +41,11 @@ class NamingTests(unittest.TestCase):
             self.assertIn(flag, msgs)
 
 
+class GoogleHelperTests(unittest.TestCase):
+    def test_reversed_client_id(self):
+        self.assertEqual(ip.reversed_client_id("1234-abc.apps.googleusercontent.com"), "com.googleusercontent.apps.1234-abc")
+
+
 class InitProjectTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -86,6 +91,27 @@ class InitProjectTests(unittest.TestCase):
         before = (self.root / "backend/go.mod").read_text()
         self.assertEqual(self.run_init("--dry-run"), 0)
         self.assertEqual((self.root / "backend/go.mod").read_text(), before)
+
+    def test_google_stays_disabled_by_default(self):
+        self.assertEqual(self.run_init(), 0)
+        self.assertRegex((self.root / "backend/.env.example").read_text(), r"(?m)^GOOGLE_CLIENT_IDS=$")
+        self.assertIn("PUBLIC_GOOGLE_SIGNIN=false", (self.root / "webapp/.env.example").read_text())
+
+    def test_google_client_ids_prefill_examples(self):
+        web, ios = "111-web.apps.googleusercontent.com", "222-ios.apps.googleusercontent.com"
+        self.assertEqual(self.run_init("--google-web-client-id", web, "--google-ios-client-id", ios), 0)
+        self.assertRegex((self.root / "backend/.env.example").read_text(), rf"(?m)^GOOGLE_CLIENT_IDS={web},{ios}$")
+        self.assertIn("PUBLIC_GOOGLE_SIGNIN=true", (self.root / "webapp/.env.example").read_text())
+        cfg = (self.root / "flutter_app/config/app.example.json").read_text()
+        self.assertIn(f'"GOOGLE_SERVER_CLIENT_ID": "{web}"', cfg)
+        self.assertIn(f'"GOOGLE_IOS_CLIENT_ID": "{ios}"', cfg)
+        xc = (self.root / "flutter_app/ios/Flutter/Google.xcconfig").read_text()
+        self.assertRegex(xc, rf"(?m)^GOOGLE_IOS_CLIENT_ID = {ios}$")
+        self.assertRegex(xc, r"(?m)^GOOGLE_REVERSED_CLIENT_ID = com\.googleusercontent\.apps\.222-ios$")
+        self.assertRegex(xc, rf"(?m)^GOOGLE_SERVER_CLIENT_ID = {web}$")
+
+    def test_invalid_google_client_id_is_rejected(self):
+        self.assertEqual(self.run_init("--google-web-client-id", "not-a-client-id"), 2)
 
     @unittest.skipUnless(shutil.which("go"), "go not installed")
     def test_backend_still_builds(self):

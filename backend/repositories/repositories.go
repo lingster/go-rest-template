@@ -78,6 +78,16 @@ type WebAuthnCredentialRepository interface {
 	DeleteByUser(userID string) error
 }
 
+// IdentityRepository persists links between users and external identity providers.
+type IdentityRepository interface {
+	// Create returns ErrDuplicate when (provider, subject) is already linked.
+	Create(i *models.UserIdentity) error
+	GetByProviderSubject(provider, subject string) (*models.UserIdentity, error)
+	// ProvidersByUsers returns the sorted, de-duplicated provider names per user id.
+	ProvidersByUsers(userIDs []string) (map[string][]string, error)
+	DeleteByUser(userID string) error
+}
+
 // AuditLogRepository persists audit entries.
 type AuditLogRepository interface {
 	Create(l *models.AuditLog) error
@@ -92,6 +102,7 @@ type Set struct {
 	Recovery      RecoveryCodeRepository
 	Passkeys      WebAuthnCredentialRepository
 	Audit         AuditLogRepository
+	Identities    IdentityRepository
 }
 
 // NewORMSet builds the Beego ORM backed repositories.
@@ -103,5 +114,6 @@ func NewORMSet() *Set {
 		Recovery:      &ormRecoveryRepo{},
 		Passkeys:      &ormPasskeyRepo{},
 		Audit:         &ormAuditRepo{},
+		Identities:    &ormIdentityRepo{},
 	}
 }

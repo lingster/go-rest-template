@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/auth/application/auth_controller.dart';
+import '../features/auth/data/google_sign_in_service.dart';
 import '../features/security/data/biometric_service.dart';
 import '../features/security/data/passkey_service.dart';
 import 'config/app_config.dart';
@@ -20,6 +21,10 @@ final biometricServiceProvider = Provider<BiometricService>(
 
 final biometricPrefsProvider = Provider<BiometricPrefs>(
   (ref) => SecureBiometricPrefs(),
+);
+
+final googleSignInServiceProvider = Provider<GoogleSignInService>(
+  (ref) => PluginGoogleSignInService(),
 );
 
 final passkeyServiceProvider = Provider<PasskeyService>(

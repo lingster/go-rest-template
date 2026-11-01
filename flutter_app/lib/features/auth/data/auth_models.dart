@@ -8,6 +8,8 @@ class User {
     required this.isActive,
     required this.totpEnabled,
     required this.passkeyCount,
+    this.hasPassword = true,
+    this.identities = const [],
   });
 
   factory User.fromJson(Map<String, dynamic> json) => User(
@@ -19,6 +21,8 @@ class User {
     isActive: (json['is_active'] as bool?) ?? true,
     totpEnabled: (json['totp_enabled'] as bool?) ?? false,
     passkeyCount: (json['passkey_count'] as num?)?.toInt() ?? 0,
+    hasPassword: (json['has_password'] as bool?) ?? true,
+    identities: ((json['identities'] as List?) ?? const []).cast<String>(),
   );
 
   final String id;
@@ -29,6 +33,13 @@ class User {
   final bool isActive;
   final bool totpEnabled;
   final int passkeyCount;
+
+  /// False for accounts created with Google until a password is set through
+  /// the emailed reset link.
+  final bool hasPassword;
+
+  /// Linked sign-in providers, e.g. `['google']`.
+  final List<String> identities;
 
   bool get isAdmin => role == 'admin';
 }
@@ -85,4 +96,26 @@ class RegisterResult {
   const RegisterResult({required this.user, required this.message});
   final User user;
   final String message;
+}
+
+/// Public sign-in provider configuration (`GET /auth/providers`).
+class ProvidersInfo {
+  const ProvidersInfo({
+    this.googleEnabled = false,
+    this.googleWebClientId = '',
+  });
+
+  factory ProvidersInfo.fromJson(Map<String, dynamic> json) {
+    final google = json['google'];
+    final g = google is Map ? google : const <String, dynamic>{};
+    return ProvidersInfo(
+      googleEnabled: (g['enabled'] as bool?) ?? false,
+      googleWebClientId: (g['web_client_id'] as String?) ?? '',
+    );
+  }
+
+  static const disabled = ProvidersInfo();
+
+  final bool googleEnabled;
+  final String googleWebClientId;
 }

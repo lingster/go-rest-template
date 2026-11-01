@@ -51,6 +51,30 @@ class AuthRepository {
     return await _persist(result) as AuthSuccess;
   }
 
+  /// Sign-in providers the server has enabled. Never throws: a failure just
+  /// means "no external providers".
+  Future<ProvidersInfo> providers() async {
+    try {
+      return await api.get(
+        '/auth/providers',
+        decode: (j) => ProvidersInfo.fromJson(asMap(j)),
+      );
+    } on ApiException {
+      return ProvidersInfo.disabled;
+    }
+  }
+
+  /// Exchanges a Google ID token for a session, or an MFA challenge when the
+  /// account has 2FA enabled.
+  Future<AuthResult> loginWithGoogle(String idToken) async {
+    final result = await api.post(
+      '/auth/google',
+      body: {'id_token': idToken},
+      decode: (j) => AuthResult.fromJson(asMap(j)),
+    );
+    return _persist(result);
+  }
+
   Future<RegisterResult> register({
     required String email,
     required String password,

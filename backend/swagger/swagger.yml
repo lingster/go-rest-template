@@ -176,6 +176,34 @@ paths:
           description: ""
           schema:
             $ref: '#/definitions/dto.Message'
+  /auth/google:
+    post:
+      tags:
+      - auth
+      description: |-
+        Verifies a Google ID token server-side. Creates the account, or links it to an existing account with the same Google-verified email. Returns an AuthResponse, or an MfaChallenge (mfa_required=true) when TOTP is enabled: Google never bypasses 2FA. Disabled (404 google_signin_disabled) unless GOOGLE_CLIENT_IDS is set.
+        <br>
+      operationId: AuthController.LoginGoogle
+      parameters:
+      - in: body
+        name: body
+        description: Google ID token
+        required: true
+        schema:
+          $ref: '#/definitions/dto.GoogleLoginRequest'
+      responses:
+        "200":
+          description: ""
+          schema:
+            $ref: '#/definitions/dto.AuthResponse'
+        "401":
+          description: invalid_token
+        "403":
+          description: account_disabled
+        "404":
+          description: google_signin_disabled
+        "429":
+          description: rate_limited
   /auth/login:
     post:
       tags:
@@ -280,6 +308,19 @@ paths:
             $ref: '#/definitions/dto.AuthResponse'
         "401":
           description: invalid_credentials
+  /auth/providers:
+    get:
+      tags:
+      - auth
+      description: |-
+        Public configuration so clients know whether to show "Continue with Google". web_client_id is not a secret.
+        <br>
+      operationId: AuthController.Providers
+      responses:
+        "200":
+          description: ""
+          schema:
+            $ref: '#/definitions/dto.ProvidersResponse'
   /auth/refresh:
     post:
       tags:
@@ -450,7 +491,8 @@ paths:
       parameters:
       - in: body
         name: body
-        description: Password and TOTP/recovery code
+        description: Password (omit for password-less accounts) and TOTP/recovery
+          code
         required: true
         schema:
           $ref: '#/definitions/dto.DisableTOTPRequest'
@@ -670,13 +712,13 @@ definitions:
   dto.DisableTOTPRequest:
     title: DisableTOTPRequest
     required:
-    - password
     - code
     type: object
     properties:
       code:
         type: string
       password:
+        description: required unless the account has no password (has_password=false)
         type: string
   dto.EmailRequest:
     title: EmailRequest
@@ -685,6 +727,24 @@ definitions:
     type: object
     properties:
       email:
+        type: string
+  dto.GoogleLoginRequest:
+    title: GoogleLoginRequest
+    required:
+    - id_token
+    type: object
+    properties:
+      id_token:
+        description: Google ID token (JWT)
+        type: string
+  dto.GoogleProvider:
+    title: GoogleProvider
+    type: object
+    properties:
+      enabled:
+        type: boolean
+      web_client_id:
+        description: public OAuth web client id; empty when disabled
         type: string
   dto.LoginRequest:
     title: LoginRequest
@@ -755,6 +815,12 @@ definitions:
         example: MacBook
       session_id:
         type: string
+  dto.ProvidersResponse:
+    title: ProvidersResponse
+    type: object
+    properties:
+      google:
+        $ref: '#/definitions/dto.GoogleProvider'
   dto.RecoveryCodesResponse:
     title: RecoveryCodesResponse
     type: object
@@ -877,10 +943,19 @@ definitions:
         example: ada@example.com
       email_verified:
         type: boolean
+      has_password:
+        description: false for accounts created via an identity provider until a password
+          is set
+        type: boolean
       id:
         description: User UUID
         type: string
         example: 6f1c1a0e-5a0e-4a3e-9f7a-3b1d2f6b7c11
+      identities:
+        description: linked identity providers, e.g. ["google"]
+        type: array
+        items:
+          type: string
       is_active:
         type: boolean
       name:

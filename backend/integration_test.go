@@ -38,7 +38,8 @@ func TestMain(m *testing.M) {
 	cfg := testutil.Config()
 	cfg.DatabaseURL = "file:" + dir + "/test.db"
 	cfg.AdminEmail, cfg.AdminPassword = adminEmail, adminPassword
-	a, err := app.New(cfg, app.Options{Mailer: mailer, Assets: assetsFS})
+	cfg.GoogleClientIDs = []string{googleWebClientID, "ios-client"}
+	a, err := app.New(cfg, app.Options{Mailer: mailer, Assets: assetsFS, GoogleVerifier: googleFake})
 	if err != nil {
 		panic(err)
 	}

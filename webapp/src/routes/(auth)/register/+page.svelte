@@ -4,9 +4,11 @@
 	import Alert from '#lib/components/Alert.svelte';
 	import AuthShell from '#lib/components/AuthShell.svelte';
 	import Button from '#lib/components/Button.svelte';
+	import GoogleSignInButton from '#lib/components/GoogleSignInButton.svelte';
 	import FormField from '#lib/components/FormField.svelte';
 	import PasswordField from '#lib/components/PasswordField.svelte';
 	import { errorMessage, fieldErrors, passwordPolicyError } from '#lib/forms.ts';
+	import { finishLogin } from '#lib/login-flow.ts';
 
 	let name = $state('');
 	let email = $state('');
@@ -77,6 +79,10 @@
 			/>
 			<Button type="submit" fullWidth {loading}>Create account</Button>
 		</form>
+		<GoogleSignInButton
+			onLogin={(res) => finishLogin(res, '/dashboard')}
+			onError={(m) => (error = m)}
+		/>
 	{/if}
 
 	{#snippet footer()}

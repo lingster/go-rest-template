@@ -27,6 +27,10 @@ type Config struct {
 
 	RequireEmailVerification bool
 
+	// GoogleClientIDs are the accepted OAuth client IDs (audiences) for Google ID tokens. The first entry
+	// is the web client ID advertised to clients. Empty disables Google sign-in.
+	GoogleClientIDs []string
+
 	MailDriver   string
 	SMTPHost     string
 	SMTPPort     int
@@ -52,6 +56,9 @@ type Config struct {
 	TrustProxy bool
 }
 
+// GoogleEnabled reports whether Google sign-in is configured.
+func (c *Config) GoogleEnabled() bool { return len(c.GoogleClientIDs) > 0 }
+
 // IsProd reports whether APP_ENV=prod.
 func (c *Config) IsProd() bool { return c.AppEnv == "prod" }
 
@@ -66,6 +73,7 @@ func Load() (*Config, error) {
 		AccessTokenTTL:           envDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:          envDuration("REFRESH_TOKEN_TTL", 720*time.Hour),
 		RequireEmailVerification: envBool("REQUIRE_EMAIL_VERIFICATION", true),
+		GoogleClientIDs:          envList("GOOGLE_CLIENT_IDS", nil),
 		MailDriver:               env("MAIL_DRIVER", "console"),
 		SMTPHost:                 env("SMTP_HOST", "localhost"),
 		SMTPPort:                 envInt("SMTP_PORT", 1025),

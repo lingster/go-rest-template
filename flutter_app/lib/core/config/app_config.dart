@@ -8,6 +8,19 @@ abstract final class AppConfig {
     defaultValue: 'http://localhost:8080',
   );
 
+  /// Web OAuth client ID (the ID token audience). Optional: when empty the app
+  /// uses `web_client_id` from `GET /auth/providers`. Required by the Android
+  /// SDK to receive an ID token at all.
+  static const String googleServerClientId = String.fromEnvironment(
+    'GOOGLE_SERVER_CLIENT_ID',
+  );
+
+  /// iOS OAuth client ID (also set `GOOGLE_IOS_CLIENT_ID` in
+  /// `ios/Flutter/Google.local.xcconfig`, see the README).
+  static const String googleIosClientId = String.fromEnvironment(
+    'GOOGLE_IOS_CLIENT_ID',
+  );
+
   static const String apiPrefix = '/api/v1';
 
   /// Base URL including the `/api/v1` prefix, without a trailing slash.

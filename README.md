@@ -9,6 +9,7 @@ A SaaS starter template: a Go/Beego REST API with complete authentication, a Flu
 - JWT access tokens with refresh token rotation and reuse detection
 - TOTP two-factor auth with recovery codes
 - Passkeys (WebAuthn) for login and as an MFA factor
+- Sign in with Google (web, iOS, Android), verified server-side, never bypasses 2FA; disabled until configured
 - TOTP replay protection, rate limiting on auth endpoints, audit log, strict CSP
 - Admin API and admin UI
 - OpenAPI/Swagger docs at `/swagger/`
@@ -81,6 +82,40 @@ latest release tag.
    `make docs` in `backend/` afterwards.
 
 <!-- template-only:end -->
+## Google sign-in setup
+
+The code ships in every project but is **disabled until `GOOGLE_CLIENT_IDS` is set** on the API. The API verifies Google ID
+tokens itself (signature via Google's JWKS, issuer, audience, expiry, `email_verified`), so no client secret is needed anywhere.
+
+1. **Google Cloud console** ([console.cloud.google.com](https://console.cloud.google.com)): create or pick a project, then
+   *APIs & Services > OAuth consent screen* (Google Auth Platform > Branding/Audience): app name, support email, authorised
+   domains; the default scopes `openid`, `email`, `profile` are enough. While the app is in *Testing*, add your Google accounts as
+   test users; publish it for everyone.
+2. *Credentials > Create credentials > OAuth client ID*, create one client per platform you ship:
+   - **Web application**: add *Authorised JavaScript origins* for the webapp (`http://localhost:5173`, `https://app.example.com`).
+     No redirect URI is needed for the button flow. This is the **web client ID** (also the `serverClientId` for Android/iOS).
+   - **iOS**: your bundle id (`bundle_id` from the generator). Note the client ID and the *reversed client ID*
+     (`com.googleusercontent.apps.<id>`).
+   - **Android**: your application id and the **SHA-1** of each signing key you will install the app with: the debug keystore
+     (`keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`), your release/upload key,
+     and, if you use **Play App Signing**, the *app signing key* SHA-1 shown in Play Console > Setup > App signing. Add one
+     Android client per key set (or one per package + SHA-1). Add the SHA-256 too if the console asks for it.
+3. **API** environment: `GOOGLE_CLIENT_IDS=<web id>,<ios id>[,<android id>]`. The **first** entry must be the web client ID
+   (it is advertised to clients by `GET /api/v1/auth/providers`); the others are accepted as token audiences. Android sign-in
+   issues tokens with the *web* client as audience, so the Android client ID is optional here.
+4. **Webapp**: build with `PUBLIC_GOOGLE_SIGNIN=true` (adds `accounts.google.com` to the CSP: `script-src`, `frame-src`,
+   `connect-src`, `style-src`; no `unsafe-inline`). The button appears when the API reports Google enabled. Do not send
+   `Cross-Origin-Opener-Policy: same-origin` on the webapp (it breaks the Google popup).
+5. **Flutter** (iOS/Android): pass `GOOGLE_SERVER_CLIENT_ID` (web client ID) and `GOOGLE_IOS_CLIENT_ID` with
+   `--dart-define-from-file=config/app.local.json` (copy `flutter_app/config/app.example.json`), and for iOS create
+   `flutter_app/ios/Flutter/Google.local.xcconfig` (see [flutter_app/README.md](flutter_app/README.md)). CI/release builds read the
+   repository variables `GOOGLE_SERVER_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID` and `PUBLIC_GOOGLE_SIGNIN`.
+6. Copier users can answer *google_signin* (and the client IDs) to have these examples pre-filled; leaving it off keeps the feature disabled.
+
+Behaviour: accounts are matched by Google `sub`; otherwise by email (the Google identity is linked and the email marked verified);
+otherwise a new account is created without a password. Users with TOTP still complete the 2FA step. Google-created accounts
+set a password through "forgot password"; see [docs/SECURITY.md](docs/SECURITY.md).
+
 ## Before deploying
 
 For every environment, set:
@@ -101,6 +136,8 @@ Configure under **Settings > Secrets and variables > Actions**:
 | `CLOUDFLARE_ACCOUNT_ID` | secret | Cloudflare account for deploy |
 | `PUBLIC_API_URL` | variable | API URL baked into the webapp at build time |
 | `API_BASE_URL` | variable | API URL baked into Flutter web/APK builds |
+| `PUBLIC_GOOGLE_SIGNIN` | variable | `true` allows Google Identity Services in the webapp CSP (optional) |
+| `GOOGLE_SERVER_CLIENT_ID` / `GOOGLE_IOS_CLIENT_ID` | variable | Google client IDs baked into the Flutter APK (optional) |
 
 ### Release process
 

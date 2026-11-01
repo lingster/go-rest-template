@@ -11,16 +11,18 @@ import (
 
 // User is the public representation of an account.
 type User struct {
-	ID            string `json:"id" description:"User UUID" example:"6f1c1a0e-5a0e-4a3e-9f7a-3b1d2f6b7c11"`
-	Email         string `json:"email" example:"ada@example.com"`
-	Name          string `json:"name" example:"Ada"`
-	Role          string `json:"role" description:"user or admin" example:"user"`
-	EmailVerified bool   `json:"email_verified"`
-	IsActive      bool   `json:"is_active"`
-	TOTPEnabled   bool   `json:"totp_enabled"`
-	PasskeyCount  int    `json:"passkey_count"`
-	CreatedAt     string `json:"created_at" description:"RFC3339 UTC" example:"2026-01-01T12:00:00Z"`
-	UpdatedAt     string `json:"updated_at" description:"RFC3339 UTC" example:"2026-01-01T12:00:00Z"`
+	ID            string   `json:"id" description:"User UUID" example:"6f1c1a0e-5a0e-4a3e-9f7a-3b1d2f6b7c11"`
+	Email         string   `json:"email" example:"ada@example.com"`
+	Name          string   `json:"name" example:"Ada"`
+	Role          string   `json:"role" description:"user or admin" example:"user"`
+	EmailVerified bool     `json:"email_verified"`
+	IsActive      bool     `json:"is_active"`
+	TOTPEnabled   bool     `json:"totp_enabled"`
+	PasskeyCount  int      `json:"passkey_count"`
+	HasPassword   bool     `json:"has_password" description:"false for accounts created via an identity provider until a password is set"`
+	Identities    []string `json:"identities" description:"linked identity providers, e.g. [\"google\"]" example:"google"`
+	CreatedAt     string   `json:"created_at" description:"RFC3339 UTC" example:"2026-01-01T12:00:00Z"`
+	UpdatedAt     string   `json:"updated_at" description:"RFC3339 UTC" example:"2026-01-01T12:00:00Z"`
 }
 
 // Tokens is an access/refresh token pair.
@@ -205,6 +207,22 @@ type UpdateProfileRequest struct {
 	Name string `json:"name" required:"true"`
 }
 
+// GoogleLoginRequest carries a Google ID token (JWT) obtained client-side.
+type GoogleLoginRequest struct {
+	IDToken string `json:"id_token" required:"true" description:"Google ID token (JWT)"`
+}
+
+// GoogleProvider describes the Google sign-in configuration for clients.
+type GoogleProvider struct {
+	Enabled     bool   `json:"enabled"`
+	WebClientID string `json:"web_client_id" description:"public OAuth web client id; empty when disabled"`
+}
+
+// ProvidersResponse lists the enabled external sign-in providers.
+type ProvidersResponse struct {
+	Google GoogleProvider `json:"google"`
+}
+
 // ChangePasswordRequest changes the current user's password.
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" required:"true"`
@@ -218,7 +236,7 @@ type CodeRequest struct {
 
 // DisableTOTPRequest disables 2FA.
 type DisableTOTPRequest struct {
-	Password string `json:"password" required:"true"`
+	Password string `json:"password" description:"required unless the account has no password (has_password=false)"`
 	Code     string `json:"code" required:"true"`
 }
 
@@ -359,6 +377,18 @@ func (r *ChangePasswordRequest) Validate() map[string]string {
 	return d
 }
 
+// MaxIDTokenLen bounds the accepted Google ID token size.
+const MaxIDTokenLen = 8192
+
+func (r *GoogleLoginRequest) Validate() map[string]string {
+	d := map[string]string{}
+	checkRequired(d, "id_token", r.IDToken)
+	if len(r.IDToken) > MaxIDTokenLen {
+		d["id_token"] = "is too long"
+	}
+	return d
+}
+
 func (r *CodeRequest) Validate() map[string]string {
 	d := map[string]string{}
 	checkRequired(d, "code", r.Code)
@@ -367,7 +397,6 @@ func (r *CodeRequest) Validate() map[string]string {
 
 func (r *DisableTOTPRequest) Validate() map[string]string {
 	d := map[string]string{}
-	checkRequired(d, "password", r.Password)
 	checkRequired(d, "code", r.Code)
 	return d
 }

@@ -56,10 +56,10 @@ class SecurityRepository {
     decode: _recoveryCodes,
   );
 
-  Future<void> disableTotp({required String password, required String code}) =>
+  Future<void> disableTotp({String? password, required String code}) =>
       api.postVoid(
         '/me/2fa/totp/disable',
-        body: {'password': password, 'code': code},
+        body: {'password': ?password, 'code': code},
       );
 
   Future<List<String>> regenerateRecoveryCodes(String code) => api.post(

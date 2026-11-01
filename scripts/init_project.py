@@ -72,6 +72,8 @@ def default_worker(slug: str) -> str:
     return slugify(_lead_digit_to_word(slug))
 
 
+GOOGLE_CLIENT_ID_RE = r"^[0-9A-Za-z._-]+\.apps\.googleusercontent\.com$"
+
 VALIDATORS = {
     "slug": (r"^[a-z0-9][a-z0-9-]*$", "lowercase letters, digits and dashes"),
     "owner": (r"^[A-Za-z0-9][A-Za-z0-9-]*$", "a GitHub user or organisation name"),
@@ -80,7 +82,10 @@ VALIDATORS = {
     "bundle_id": (r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*){2,}$", "reverse-DNS, each part starts with a letter, e.g. com.acme.app"),
     "worker": (r"^[a-z0-9][a-z0-9-]{0,62}$", "lowercase letters, digits and dashes"),
     "email": (r"^[^@\s]+@[^@\s]+\.[^@\s]+$", "an email address"),
+    "google_web_client_id": (GOOGLE_CLIENT_ID_RE, "a Google OAuth client id ending in .apps.googleusercontent.com"),
+    "google_ios_client_id": (GOOGLE_CLIENT_ID_RE, "a Google OAuth client id ending in .apps.googleusercontent.com"),
 }
+OPTIONAL = {"google_web_client_id", "google_ios_client_id"}
 
 
 @dataclass
@@ -94,11 +99,16 @@ class Settings:
     worker: str
     author: str
     email: str
+    # Optional "Sign in with Google" client IDs (public identifiers, not secrets). Empty = leave disabled.
+    google_web_client_id: str = ""
+    google_ios_client_id: str = ""
 
     def validate(self) -> list[str]:
         errors = []
         for f in fields(self):
             value = getattr(self, f.name)
+            if f.name in OPTIONAL and not value.strip():
+                continue
             if not value.strip():
                 errors.append(f"--{f.name.replace('_', '-')} must not be empty")
             elif f.name in VALIDATORS and not re.match(VALIDATORS[f.name][0], value):
@@ -134,6 +144,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--worker", help="Cloudflare worker name for the webapp")
     p.add_argument("--author", help="copyright holder for LICENSE")
     p.add_argument("--email", help="API contact email shown in swagger")
+    p.add_argument("--google-web-client-id", default="",
+                   help="Google web OAuth client id; enables Sign in with Google in the generated .env/config examples")
+    p.add_argument("--google-ios-client-id", default="", help="Google iOS OAuth client id (optional)")
     p.add_argument("-y", "--yes", action="store_true", help="no prompts: use flags and defaults")
     p.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
     p.add_argument("--skip-docs", action="store_true", help="don't regenerate swagger (make docs)")
@@ -163,6 +176,8 @@ def resolve(args: argparse.Namespace, ask) -> Settings:
         worker=get("worker", default_worker(slug)),
         author=get("author", TEMPLATE_AUTHOR),
         email=get("email", TEMPLATE_EMAIL),
+        google_web_client_id=args.google_web_client_id.strip(),
+        google_ios_client_id=args.google_ios_client_id.strip(),
     )
 
 
@@ -194,6 +209,67 @@ def rewrite_files(root: Path, pairs: list[tuple[str, str]], dry_run: bool) -> in
             if not dry_run:
                 path.write_text(new, encoding="utf-8")
     return changed
+
+
+def reversed_client_id(client_id: str) -> str:
+    """'1234-abc.apps.googleusercontent.com' -> 'com.googleusercontent.apps.1234-abc' (iOS URL scheme)."""
+    return ".".join(reversed(client_id.split(".")))
+
+
+def _set_assignment(text: str, key: str, value: str) -> str:
+    """Set `KEY=...` / `KEY = ...` (env files and xcconfig) keeping the original separator."""
+    def repl(m: re.Match) -> str:
+        return m.group(1) + (" " if m.group(1).endswith(" =") else "") + value
+
+    return re.sub(rf"^({re.escape(key)}[ \t]*=)[ \t]*.*$", repl, text, flags=re.M)
+
+
+def _set_json_string(text: str, key: str, value: str) -> str:
+    return re.sub(rf'("{re.escape(key)}": )"[^"]*"', lambda m: f'{m.group(1)}"{value}"', text)
+
+
+def configure_google(root: Path, s: Settings, dry_run: bool) -> list[str]:
+    """Pre-fill the Sign in with Google examples. No-op unless a web client id was given.
+
+    The code ships in every project and stays disabled while GOOGLE_CLIENT_IDS is empty; client IDs are
+    public identifiers, so writing them to the *.example files is fine (never put client secrets anywhere).
+    """
+    web, ios = s.google_web_client_id, s.google_ios_client_id
+    if not web:
+        return []
+
+    def env_ids(t: str) -> str:
+        return _set_assignment(t, "GOOGLE_CLIENT_IDS", ",".join(i for i in (web, ios) if i))
+
+    def app_json(t: str) -> str:
+        t = _set_json_string(t, "GOOGLE_SERVER_CLIENT_ID", web)
+        return _set_json_string(t, "GOOGLE_IOS_CLIENT_ID", ios) if ios else t
+
+    def xcconfig(t: str) -> str:
+        t = _set_assignment(t, "GOOGLE_SERVER_CLIENT_ID", web)
+        if ios:
+            t = _set_assignment(t, "GOOGLE_IOS_CLIENT_ID", ios)
+            t = _set_assignment(t, "GOOGLE_REVERSED_CLIENT_ID", reversed_client_id(ios))
+        return t
+
+    edits = {
+        "backend/.env.example": env_ids,
+        "webapp/.env.example": lambda t: _set_assignment(t, "PUBLIC_GOOGLE_SIGNIN", "true"),
+        "flutter_app/config/app.example.json": app_json,
+        "flutter_app/ios/Flutter/Google.xcconfig": xcconfig,
+    }
+    touched = []
+    for rel, fn in edits.items():
+        path = root / rel
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        new = fn(text)
+        if new != text:
+            touched.append(rel)
+            if not dry_run:
+                path.write_text(new, encoding="utf-8")
+    return touched
 
 
 def move_main_activity(root: Path, bundle_id: str, dry_run: bool) -> Path | None:
@@ -253,9 +329,12 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
         return 1
 
     count = rewrite_files(root, settings.replacements(), args.dry_run)
+    google_files = configure_google(root, settings, args.dry_run)
     activity = move_main_activity(root, settings.bundle_id, args.dry_run)
     verb = "Would update" if args.dry_run else "Updated"
     print(f"{verb} {count} files.")
+    if google_files:
+        print("Sign in with Google pre-configured in: " + ", ".join(google_files))
     if activity:
         print(f"MainActivity.kt -> {activity.relative_to(root)}")
     if args.dry_run:
@@ -270,7 +349,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
         "\nDone. Next steps:\n"
         "  1. Set JWT_SECRET, WEBAUTHN_RP_ID and WEBAUTHN_RP_ORIGINS for each environment.\n"
         "  2. Add CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID secrets and PUBLIC_API_URL / API_BASE_URL variables.\n"
-        "  3. git add -A && git commit -m 'chore: initialise project from template'"
+        "  3. Optional: Sign in with Google (disabled until GOOGLE_CLIENT_IDS is set), see README.\n"
+        "  4. git add -A && git commit -m 'chore: initialise project from template'"
     )
     return 0
 

@@ -21,7 +21,7 @@ export const totpSetup = () => api.request<TotpSetup>('/me/2fa/totp/setup', { me
 export const totpEnable = (code: string) =>
 	api.request<RecoveryCodes>('/me/2fa/totp/enable', { method: 'POST', body: { code } });
 
-export const totpDisable = (body: { password: string; code: string }) =>
+export const totpDisable = (body: { password?: string; code: string }) =>
 	api.request<MessageResponse>('/me/2fa/totp/disable', { method: 'POST', body });
 
 export const regenerateRecoveryCodes = (code: string) =>
