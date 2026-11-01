@@ -69,6 +69,7 @@ API on :8080, Postgres :5432, Mailpit UI <http://localhost:8025> (SMTP :1025). A
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | comma list (`*` allowed) |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` | `localhost` / `Go REST Template` | |
 | `WEBAUTHN_RP_ORIGINS` | `http://localhost:5173` | comma list |
+| `GOOGLE_CLIENT_IDS` | empty | comma list of Google OAuth client IDs (first = web). Empty disables Sign in with Google (`POST /auth/google` -> 404 `google_signin_disabled`) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | empty | seeds a verified admin on start if it doesn't exist |
 | `RATE_LIMIT_PER_MINUTE` | `60` | per client IP across `/api/v1/auth/*`; `0` disables (extra, not in the contract) |
 | `BCRYPT_COST` | `12` | |
@@ -142,3 +143,11 @@ forgot/reset, 2FA login, admin access control, CSP/CORS/swagger) against a temp 
 * `POST /auth/passkey/login/begin` never reveals whether an email exists: an unknown email, or one without passkeys, gets a
   discoverable-credential ceremony with the same response shape as omitting the email.
 * One-time token (verify/reset) failures are `400 invalid_token`; admins cannot delete, demote or deactivate themselves (`403 forbidden`).
+* **Sign in with Google** (`POST /auth/google`, `GET /auth/providers`): see "Google sign-in setup" in the root README. Tokens are
+  verified in-process by `services.JWKSGoogleVerifier` (behind the `GoogleTokenVerifier` interface; tests inject
+  `testutil.FakeGoogleVerifier`). Users are matched by Google `sub` (table `user_identities`, unique on provider+subject), then by
+  case-insensitive email (linked, email marked verified), else created with an empty password hash (`has_password=false`).
+  An unverified local account that gets linked loses its password, TOTP, passkeys and sessions (pre-registration takeover
+  defence). Google is only a first factor: TOTP users get the `mfa_required` challenge. Password-less accounts: password login
+  fails with the generic `invalid_credentials`, `change-password` returns `409 password_not_set` (use forgot/reset-password),
+  `totp/disable` needs only the code. New schema is created automatically (`user_identities`); no column was added to `users`.

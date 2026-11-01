@@ -72,6 +72,27 @@ author_email:
   help: API contact email (shown in swagger)
   default: ling@aidraw.ai
 
+google_signin:
+  type: bool
+  help: Pre-configure "Sign in with Google" client IDs? (the code is always included and stays disabled until GOOGLE_CLIENT_IDS is set)
+  default: false
+
+google_web_client_id:
+  type: str
+  help: Google OAuth *web* client id (xxx.apps.googleusercontent.com). Create it in Google Cloud console, see README
+  default: ""
+  when: "{{ google_signin }}"
+  validator: >-
+    {% if google_web_client_id and not (google_web_client_id | regex_search('^[0-9A-Za-z._-]+\\.apps\\.googleusercontent\\.com$')) %}Must end in .apps.googleusercontent.com{% endif %}
+
+google_ios_client_id:
+  type: str
+  help: Google OAuth *iOS* client id (optional, leave empty to add it later)
+  default: ""
+  when: "{{ google_signin }}"
+  validator: >-
+    {% if google_ios_client_id and not (google_ios_client_id | regex_search('^[0-9A-Za-z._-]+\\.apps\\.googleusercontent\\.com$')) %}Must end in .apps.googleusercontent.com{% endif %}
+
 _tasks:
   - command:
       - python3
@@ -95,3 +116,7 @@ _tasks:
       - "{{ author }}"
       - --email
       - "{{ author_email }}"
+      - --google-web-client-id
+      - "{{ google_web_client_id }}"
+      - --google-ios-client-id
+      - "{{ google_ios_client_id }}"
