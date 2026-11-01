@@ -61,10 +61,17 @@ class AuthController extends Notifier<AuthState> {
         _set(const Unauthenticated());
         return;
       }
-      if (await biometricUnlockEnabled()) {
+      final optedIn =
+          await ref.read(biometricPrefsProvider).read() ==
+          BiometricChoice.enabled;
+      if (!optedIn) {
+        await _restore();
+      } else if (await ref.read(biometricServiceProvider).isSupported()) {
         await unlock();
       } else {
-        await _restore();
+        // Opted in, but biometrics are no longer available (e.g. enrolment
+        // removed): never restore silently, require the password instead.
+        await usePasswordInstead();
       }
     } catch (_) {
       _set(const Unauthenticated());

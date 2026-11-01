@@ -71,11 +71,13 @@ void main() {
   });
 
   test(
-    'enabled but device unsupported -> restores without prompting',
+    'enabled but device unsupported -> session cleared, password required',
     () async {
       final c = make(supported: false);
-      expect(await boot(c), isA<Authenticated>());
+      expect(await boot(c), isA<Unauthenticated>());
       verifyNever(() => bio.authenticate(any()));
+      verifyNever(repo.restoreSession);
+      verify(repo.logout).called(1);
     },
   );
 
