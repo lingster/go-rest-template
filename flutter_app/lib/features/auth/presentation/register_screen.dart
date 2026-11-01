@@ -10,6 +10,7 @@ import '../../../shared/widgets/form_page.dart';
 import '../../../shared/widgets/password_field.dart';
 import '../../../shared/widgets/primary_button.dart';
 import '../application/auth_controller.dart';
+import 'google_sign_in_button.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -120,6 +121,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen>
                 loading: busy,
                 onPressed: _submit,
               ),
+              const GoogleSignInButton(),
               const SizedBox(height: 16),
               TextButton(
                 onPressed: () => context.go('/login'),

@@ -18,6 +18,7 @@ class ProfileScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(authControllerProvider);
     final email = state is Authenticated ? state.user.email : '';
+    final hasPassword = state is! Authenticated || state.user.hasPassword;
     return FormPage(
       title: 'Profile',
       appBar: AppBar(title: const Text('Profile')),
@@ -26,7 +27,10 @@ class ProfileScreen extends ConsumerWidget {
         const SizedBox(height: 24),
         const _NameCard(),
         const SizedBox(height: 24),
-        const _PasswordCard(),
+        if (hasPassword)
+          const _PasswordCard()
+        else
+          _SetPasswordCard(email: email),
         const SizedBox(height: 24),
         OutlinedButton.icon(
           key: const Key('logout'),
@@ -105,6 +109,61 @@ class _NameCardState extends ConsumerState<_NameCard>
           PrimaryButton(label: 'Save', loading: busy, onPressed: _save),
         ],
       ),
+    );
+  }
+}
+
+/// Google-created accounts have no password; they set one via the emailed
+/// reset link (proof of mailbox control) instead of "change password".
+class _SetPasswordCard extends ConsumerStatefulWidget {
+  const _SetPasswordCard({required this.email});
+  final String email;
+
+  @override
+  ConsumerState<_SetPasswordCard> createState() => _SetPasswordCardState();
+}
+
+class _SetPasswordCardState extends ConsumerState<_SetPasswordCard>
+    with AsyncActionMixin<_SetPasswordCard> {
+  String? _sent;
+
+  Future<void> _send() async {
+    String? message;
+    final ok = await runAction(() async {
+      message = await ref
+          .read(authRepositoryProvider)
+          .forgotPassword(widget.email);
+    });
+    if (ok && mounted) setState(() => _sent = message ?? 'Email sent.');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Set a password', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 12),
+        const Text(
+          'You signed in with Google, so this account has no password yet. '
+          'We can email you a link to choose one.',
+        ),
+        const SizedBox(height: 12),
+        if (errorText != null) ...[
+          ErrorBanner(message: errorText!),
+          const SizedBox(height: 12),
+        ],
+        if (_sent != null) ...[
+          InfoBanner(message: _sent!),
+          const SizedBox(height: 12),
+        ],
+        PrimaryButton(
+          key: const Key('send_password_link'),
+          label: 'Email me a password link',
+          loading: busy,
+          onPressed: _send,
+        ),
+      ],
     );
   }
 }

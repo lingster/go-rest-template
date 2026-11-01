@@ -138,6 +138,39 @@ Required platform setup:
 - **Web**: `web/index.html` loads the plugin's JS bundle from `web/passkeys_bundle.js` (a local copy of
   corbado/flutter-passkeys 2.4.0 `bundle.js`). WebAuthn requires HTTPS (or localhost).
 
+## Sign in with Google (iOS / Android)
+
+Uses [`google_sign_in`](https://pub.dev/packages/google_sign_in) 7.x (singleton `GoogleSignIn.instance`, one-time
+`initialize`, `authenticate()`). The ID token is sent to `POST /auth/google`, which verifies it; accounts with
+TOTP get the usual challenge and reuse the `/2fa` screen. The "Continue with Google" button on login/register
+shows only when `GET /auth/providers` says Google is enabled and the platform is iOS/Android (the web build uses
+the webapp's Google Identity Services button instead; not wired into Flutter web).
+
+Client IDs are build-time config, never hard-coded. Copy `config/app.example.json` to `config/app.local.json`
+(git-ignored) and run `flutter run --dart-define-from-file=config/app.local.json` (or pass `--dart-define`):
+
+| Define | Notes |
+|---|---|
+| `GOOGLE_SERVER_CLIENT_ID` | **Web** OAuth client ID (the ID token audience). Needed on Android. Optional: falls back to `web_client_id` from `/auth/providers`. |
+| `GOOGLE_IOS_CLIENT_ID` | **iOS** OAuth client ID. |
+
+- **Android**: no manifest change. Create an *Android* OAuth client for your package name + SHA-1 of every signing
+  key (debug, release, Play app signing) in Google Cloud, and make sure the server's `GOOGLE_CLIENT_IDS`
+  contains the web client ID (first) so the token audience is accepted.
+- **iOS**: `Info.plist` reads `GIDClientID`, `GIDServerClientID` and the URL scheme from build settings. Create
+  `ios/Flutter/Google.local.xcconfig` (git-ignored; see the comments in `ios/Flutter/Google.xcconfig`):
+
+  ```
+  GOOGLE_IOS_CLIENT_ID = 1234-abc.apps.googleusercontent.com
+  GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.1234-abc
+  GOOGLE_SERVER_CLIENT_ID = 5678-def.apps.googleusercontent.com
+  ```
+
+  The server's `GOOGLE_CLIENT_IDS` must also include the iOS client ID, as ID tokens from iOS may carry it as `aud`.
+- Accounts created with Google have no password: Profile shows "Email me a password link" (reset flow) instead of
+  "Change password", and disabling TOTP asks for the code only.
+- Tests use a fake `GoogleSignInService` (`test/helpers/pump_app.dart`); the plugin itself is not exercised.
+
 ## Rename the package / bundle id for a new project
 
 1. `pubspec.yaml`: change `name:` and replace `package:saas_app/` imports

@@ -12,6 +12,7 @@ import '../../../shared/widgets/password_field.dart';
 import '../../../shared/widgets/primary_button.dart';
 import '../application/auth_controller.dart';
 import '../data/auth_models.dart';
+import 'google_sign_in_button.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -149,6 +150,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 label: const Text('Sign in with passkey'),
                 onPressed: busy ? null : _passkey,
               ),
+              const GoogleSignInButton(),
               if (_canUseBiometrics) ...[
                 const SizedBox(height: 12),
                 OutlinedButton.icon(

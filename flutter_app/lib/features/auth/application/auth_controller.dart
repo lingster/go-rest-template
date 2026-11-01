@@ -13,6 +13,11 @@ final authRepositoryProvider = Provider<AuthRepository>(
   ),
 );
 
+/// Which external sign-in providers the server has enabled (fetched once).
+final signInProvidersProvider = FutureProvider<ProvidersInfo>(
+  (ref) => ref.watch(authRepositoryProvider).providers(),
+);
+
 sealed class AuthState {
   const AuthState();
 }
@@ -119,6 +124,14 @@ class AuthController extends Notifier<AuthState> {
   /// Returns [MfaChallenge] when a second factor is required.
   Future<AuthResult> login(String email, String password) async {
     final result = await _repo.login(email, password);
+    _apply(result);
+    return result;
+  }
+
+  /// Signs in with a Google ID token. Returns [MfaChallenge] when a second
+  /// factor is required (Google never bypasses 2FA).
+  Future<AuthResult> loginWithGoogle(String idToken) async {
+    final result = await _repo.loginWithGoogle(idToken);
     _apply(result);
     return result;
   }

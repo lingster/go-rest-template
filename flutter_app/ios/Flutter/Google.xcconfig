@@ -1,0 +1,10 @@
+// Sign in with Google (iOS). Placeholders only: do NOT put real IDs in this tracked file.
+// Create ios/Flutter/Google.local.xcconfig (git-ignored) with your values, e.g.
+//   GOOGLE_IOS_CLIENT_ID = 1234-abc.apps.googleusercontent.com
+//   GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.1234-abc
+//   GOOGLE_SERVER_CLIENT_ID = 5678-def.apps.googleusercontent.com
+// GOOGLE_REVERSED_CLIENT_ID is the iOS client ID with its two parts reversed (the URL scheme Google redirects to).
+// GOOGLE_SERVER_CLIENT_ID is the WEB client ID (ID token audience).
+GOOGLE_IOS_CLIENT_ID =
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.not-configured
+GOOGLE_SERVER_CLIENT_ID =

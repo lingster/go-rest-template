@@ -46,3 +46,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Local Sign in with Google configuration (client IDs / per-developer overrides)
+/config/*.local.json
+/ios/Flutter/Google.local.xcconfig
