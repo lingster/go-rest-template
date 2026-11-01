@@ -34,6 +34,11 @@ export default defineConfig(({ mode }) => ({
 					'default-src': ['self'],
 					'script-src': ['self'],
 					'style-src': ['self'],
+					// Only SvelteKit's built-in route announcer (fixed inline style attribute).
+					'style-src-attr': [
+						'unsafe-hashes',
+						'sha256-S8qMpvofolR8Mpjy4kQvEm7m1q8clzU4dfDH0AmvZjo='
+					],
 					'connect-src': ['self', apiOrigin(mode)],
 					'img-src': ['self', 'data:'],
 					'frame-ancestors': ['none'],
