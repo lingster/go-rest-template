@@ -27,6 +27,9 @@ type AuthService struct {
 	cfg      *config.Config
 	users    repositories.UserRepository
 	passkeys repositories.WebAuthnCredentialRepository
+	recovery repositories.RecoveryCodeRepository
+	idents   repositories.IdentityRepository
+	google   GoogleTokenVerifier // nil when Google sign-in is disabled
 	hasher   PasswordHasher
 	tokens   *TokenService
 	ott      *OneTimeTokenService
@@ -39,11 +42,12 @@ type AuthService struct {
 	dummyHash string
 }
 
-func NewAuthService(cfg *config.Config, users repositories.UserRepository, passkeys repositories.WebAuthnCredentialRepository,
+func NewAuthService(cfg *config.Config, repos *repositories.Set, google GoogleTokenVerifier,
 	hasher PasswordHasher, tokens *TokenService, ott *OneTimeTokenService, mfa *MFAService, passkey *PasskeyService,
 	userSvc *UserService, mailer mail.Mailer, audit *AuditService) *AuthService {
 	dummy, _ := hasher.Hash("dummy-password-for-timing")
-	return &AuthService{cfg: cfg, users: users, passkeys: passkeys, hasher: hasher, tokens: tokens, ott: ott, mfa: mfa,
+	return &AuthService{cfg: cfg, users: repos.Users, passkeys: repos.Passkeys, recovery: repos.Recovery,
+		idents: repos.Identities, google: google, hasher: hasher, tokens: tokens, ott: ott, mfa: mfa,
 		passkey: passkey, userSvc: userSvc, mailer: mailer, audit: audit, dummyHash: dummy}
 }
 
@@ -126,6 +130,11 @@ func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*LoginR
 	if err != nil {
 		return nil, err
 	}
+	if !u.HasPassword() {
+		s.hasher.Verify(s.dummyHash, req.Password) // same failure and timing as a wrong password
+		_ = s.fail(ctx, u.ID, "no_password")
+		return nil, apperr.InvalidCredentials()
+	}
 	if !s.hasher.Verify(u.PasswordHash, req.Password) {
 		_ = s.fail(ctx, u.ID, "bad_password")
 		return nil, apperr.InvalidCredentials()
@@ -134,18 +143,24 @@ func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*LoginR
 		_ = s.fail(ctx, u.ID, apperr.As(err).Code)
 		return nil, err
 	}
-	if u.TOTPEnabled {
-		tok, err := s.tokens.IssueMFAToken(u.ID)
-		if err != nil {
-			return nil, err
-		}
-		methods := []string{"totp", "recovery_code"}
-		if n, _ := s.passkeys.CountByUser(u.ID); n > 0 {
-			methods = append(methods, "passkey")
-		}
-		return &LoginResult{Challenge: &dto.MFAChallenge{MFARequired: true, MFAToken: tok, Methods: methods}}, nil
+	return s.completeOrChallenge(ctx, u, "password")
+}
+
+// completeOrChallenge finishes a first-factor login: a session, or an MFA challenge when TOTP is
+// enabled. Every first factor (password, Google) goes through here so none can bypass 2FA.
+func (s *AuthService) completeOrChallenge(ctx context.Context, u *models.User, method string) (*LoginResult, error) {
+	if !u.TOTPEnabled {
+		return s.complete(ctx, u, method)
 	}
-	return s.complete(ctx, u, "password")
+	tok, err := s.tokens.IssueMFAToken(u.ID)
+	if err != nil {
+		return nil, err
+	}
+	methods := []string{"totp", "recovery_code"}
+	if n, _ := s.passkeys.CountByUser(u.ID); n > 0 {
+		methods = append(methods, "passkey")
+	}
+	return &LoginResult{Challenge: &dto.MFAChallenge{MFARequired: true, MFAToken: tok, Methods: methods}}, nil
 }
 
 // LoginMFA completes a login with a TOTP or recovery code.
@@ -302,6 +317,11 @@ func (s *AuthService) ResetPassword(ctx context.Context, token, password string)
 
 // ChangePassword changes the password of an authenticated user.
 func (s *AuthService) ChangePassword(ctx context.Context, u *models.User, current, next string) error {
+	if !u.HasPassword() {
+		// Accounts created via Google have no password; they set one through the e-mail reset flow
+		// (proof of mailbox control) rather than being able to set it with just an access token.
+		return apperr.PasswordNotSet()
+	}
 	if !s.hasher.Verify(u.PasswordHash, current) {
 		return apperr.InvalidCredentials()
 	}

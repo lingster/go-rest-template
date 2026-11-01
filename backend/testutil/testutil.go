@@ -17,7 +17,36 @@ import (
 	"github.com/lingster/go-rest-template/backend/database"
 	"github.com/lingster/go-rest-template/backend/mail"
 	"github.com/lingster/go-rest-template/backend/repositories"
+	"github.com/lingster/go-rest-template/backend/services"
 )
+
+// FakeGoogleVerifier is an in-memory services.GoogleTokenVerifier: tokens must be registered with Add.
+type FakeGoogleVerifier struct {
+	mu     sync.Mutex
+	claims map[string]*services.GoogleClaims
+}
+
+// Add registers claims for an opaque token string and returns the token.
+func (f *FakeGoogleVerifier) Add(token string, c services.GoogleClaims) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.claims == nil {
+		f.claims = map[string]*services.GoogleClaims{}
+	}
+	f.claims[token] = &c
+	return token
+}
+
+// Verify returns the registered claims, or ErrInvalidGoogleToken for unknown tokens.
+func (f *FakeGoogleVerifier) Verify(_ context.Context, token string) (*services.GoogleClaims, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c, ok := f.claims[token]; ok {
+		cp := *c
+		return &cp, nil
+	}
+	return nil, services.ErrInvalidGoogleToken
+}
 
 // Config returns a fast, test-friendly configuration.
 func Config() *config.Config {

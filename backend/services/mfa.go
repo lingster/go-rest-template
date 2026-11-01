@@ -120,7 +120,8 @@ func (m *MFAService) Disable(ctx context.Context, u *models.User, password, code
 	if !u.TOTPEnabled {
 		return apperr.Conflict("Two-factor authentication is not enabled")
 	}
-	if !m.hasher.Verify(u.PasswordHash, password) {
+	// Password-less (Google) accounts skip the password check; the TOTP/recovery code below remains required.
+	if u.HasPassword() && !m.hasher.Verify(u.PasswordHash, password) {
 		return apperr.InvalidCredentials()
 	}
 	if ok, err := m.VerifyCode(u, code); err != nil {

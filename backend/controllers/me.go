@@ -99,7 +99,7 @@ func (c *MeController) TOTPEnable() {
 // TOTPDisable turns TOTP off
 // @Title TOTPDisable
 // @Security BearerAuth
-// @Param	body	body	dto.DisableTOTPRequest	true	"Password and TOTP/recovery code"
+// @Param	body	body	dto.DisableTOTPRequest	true	"Password (omit for password-less accounts) and TOTP/recovery code"
 // @Success 200 {object} dto.Message
 // @router /2fa/totp/disable [post]
 func (c *MeController) TOTPDisable() {

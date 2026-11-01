@@ -32,6 +32,8 @@ const (
 	AuditTokenReuse       = "refresh.reuse_detected"
 	AuditProfileUpdate    = "profile.update"
 	AuditAdminSeedCreated = "admin.seeded"
+	AuditGoogleLogin      = "auth.google_login"
+	AuditIdentityLinked   = "auth.identity_linked"
 )
 
 // RequestMeta is per-request context recorded in audit entries.

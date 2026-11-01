@@ -25,6 +25,16 @@ type Container struct {
 	Mailer   mail.Mailer
 }
 
+// Option customises container wiring (tests inject fakes).
+type Option func(*options)
+
+type options struct{ google services.GoogleTokenVerifier }
+
+// WithGoogleVerifier replaces the Google ID token verifier (used even when GOOGLE_CLIENT_IDS is empty).
+func WithGoogleVerifier(v services.GoogleTokenVerifier) Option {
+	return func(o *options) { o.google = v }
+}
+
 // NewMailer builds the configured mail driver.
 func NewMailer(cfg *config.Config) mail.Mailer {
 	if cfg.MailDriver == "smtp" {
@@ -35,7 +45,14 @@ func NewMailer(cfg *config.Config) mail.Mailer {
 }
 
 // New wires everything. mailer may be nil (the configured driver is used).
-func New(cfg *config.Config, repos *repositories.Set, mailer mail.Mailer) (*Container, error) {
+func New(cfg *config.Config, repos *repositories.Set, mailer mail.Mailer, opts ...Option) (*Container, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.google == nil && cfg.GoogleEnabled() {
+		o.google = services.NewJWKSGoogleVerifier(cfg.GoogleClientIDs, "", nil)
+	}
 	if mailer == nil {
 		mailer = NewMailer(cfg)
 	}
@@ -46,14 +63,14 @@ func New(cfg *config.Config, repos *repositories.Set, mailer mail.Mailer) (*Cont
 	hasher := services.BcryptHasher{Cost: cfg.BcryptCost}
 	audit := services.NewAuditService(repos.Audit)
 	tokens := services.NewTokenService(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, repos.RefreshTokens, audit)
-	users := services.NewUserService(repos.Users, repos.Passkeys, audit)
+	users := services.NewUserService(repos.Users, repos.Passkeys, repos.Identities, audit)
 	ott := services.NewOneTimeTokenService(repos.OneTime)
 	mfa := services.NewMFAService(repos.Users, repos.Recovery, hasher, box, audit, cfg.WebAuthnRPName)
 	passkeys, err := services.NewPasskeyService(cfg, repos.Passkeys, repos.Users, services.NewMemorySessionStore(), audit)
 	if err != nil {
 		return nil, err
 	}
-	auth := services.NewAuthService(cfg, repos.Users, repos.Passkeys, hasher, tokens, ott, mfa, passkeys, users, mailer, audit)
+	auth := services.NewAuthService(cfg, repos, o.google, hasher, tokens, ott, mfa, passkeys, users, mailer, audit)
 	admin := services.NewAdminService(repos, hasher, tokens, users, audit)
 	return &Container{Cfg: cfg, Repos: repos, Audit: audit, Tokens: tokens, Users: users, MFA: mfa,
 		Passkeys: passkeys, Auth: auth, Admin: admin, Mailer: mailer}, nil

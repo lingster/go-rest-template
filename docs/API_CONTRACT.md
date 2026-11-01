@@ -23,6 +23,7 @@ All three projects MUST follow this contract exactly. Base path: `/api/v1`. JSON
 // User
 { "id": "uuid", "email": "a@b.com", "name": "Ada", "role": "user|admin",
   "email_verified": true, "is_active": true, "totp_enabled": false, "passkey_count": 0,
+  "has_password": true, "identities": ["google"],   // has_password=false for Google-created accounts
   "created_at": "...", "updated_at": "..." }
 
 // Tokens
@@ -53,6 +54,8 @@ Refresh token: random opaque string, stored hashed (SHA-256) in DB, rotated on e
 | POST | `/auth/register` | `{email, password, name}` | 201 `{user: User, message}` |
 | POST | `/auth/login` | `{email, password}` | 200 AuthResponse **or** MfaChallenge |
 | POST | `/auth/login/2fa` | `{mfa_token, code}` (TOTP 6 digits or recovery code) | 200 AuthResponse |
+| GET | `/auth/providers` | – | 200 `{"google": {"enabled": bool, "web_client_id": "..."}}` (public) |
+| POST | `/auth/google` | `{id_token}` (Google ID token) | 200 AuthResponse **or** MfaChallenge; 401 `invalid_token`; 404 `google_signin_disabled` |
 | POST | `/auth/refresh` | `{refresh_token}` | 200 Tokens |
 | POST | `/auth/logout` | `{refresh_token}` | 204 |
 | POST | `/auth/verify-email` | `{token}` | 200 `{message}` |
@@ -64,6 +67,12 @@ Refresh token: random opaque string, stored hashed (SHA-256) in DB, rotated on e
 
 Login when `REQUIRE_EMAIL_VERIFICATION=true` and email unverified → 403 `email_not_verified`.
 Disabled user → 403 `account_disabled`.
+
+Google sign-in (`POST /auth/google`): matched by Google `sub`, else by case-insensitive email (the identity is linked and the
+email marked verified), else a new account is created with `has_password=false`. TOTP users get the same MfaChallenge and
+finish via `/auth/login/2fa`. Password login and `/me/change-password` fail for accounts without a password (generic
+`invalid_credentials` / 409 `password_not_set`); such users set one through forgot/reset-password. `/me/2fa/totp/disable`
+takes `password` only when `has_password=true`.
 
 ## Authenticated user endpoints (Bearer)
 
@@ -114,7 +123,8 @@ Both the SvelteKit webapp and Flutter (go_router, web + deep links) implement th
 `REQUIRE_EMAIL_VERIFICATION` (true), `MAIL_DRIVER` (console|smtp), `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `MAIL_FROM`, `FRONTEND_URL` (http://localhost:5173), `CORS_ALLOWED_ORIGINS` (comma list),
 `WEBAUTHN_RP_ID` (localhost), `WEBAUTHN_RP_NAME`, `WEBAUTHN_RP_ORIGINS` (comma list),
-`ADMIN_EMAIL` / `ADMIN_PASSWORD` (seed an admin on first start if set).
+`ADMIN_EMAIL` / `ADMIN_PASSWORD` (seed an admin on first start if set),
+`GOOGLE_CLIENT_IDS` (comma list of web/iOS/Android OAuth client IDs, first = web; empty disables Google sign-in).
 
 ## Repository layout
 

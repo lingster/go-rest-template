@@ -81,6 +81,15 @@ func init() {
 
     beego.GlobalControllerRouter["github.com/lingster/go-rest-template/backend/controllers:AuthController"] = append(beego.GlobalControllerRouter["github.com/lingster/go-rest-template/backend/controllers:AuthController"],
         beego.ControllerComments{
+            Method: "LoginGoogle",
+            Router: `/google`,
+            AllowHTTPMethods: []string{"post"},
+            MethodParams: param.Make(),
+            Filters: nil,
+            Params: nil})
+
+    beego.GlobalControllerRouter["github.com/lingster/go-rest-template/backend/controllers:AuthController"] = append(beego.GlobalControllerRouter["github.com/lingster/go-rest-template/backend/controllers:AuthController"],
+        beego.ControllerComments{
             Method: "Login",
             Router: `/login`,
             AllowHTTPMethods: []string{"post"},
@@ -120,6 +129,15 @@ func init() {
             Method: "PasskeyLoginFinish",
             Router: `/passkey/login/finish`,
             AllowHTTPMethods: []string{"post"},
+            MethodParams: param.Make(),
+            Filters: nil,
+            Params: nil})
+
+    beego.GlobalControllerRouter["github.com/lingster/go-rest-template/backend/controllers:AuthController"] = append(beego.GlobalControllerRouter["github.com/lingster/go-rest-template/backend/controllers:AuthController"],
+        beego.ControllerComments{
+            Method: "Providers",
+            Router: `/providers`,
+            AllowHTTPMethods: []string{"get"},
             MethodParams: param.Make(),
             Filters: nil,
             Params: nil})

@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"errors"
+	"sort"
 	"strings"
 
 	"github.com/beego/beego/v2/client/orm"
@@ -266,4 +267,42 @@ func (*ormAuditRepo) List(userID string, offset, limit int) ([]*models.AuditLog,
 	var logs []*models.AuditLog
 	_, err = qs.OrderBy("-created_at", "-id").Limit(limit, offset).All(&logs)
 	return logs, total, err
+}
+
+// ---- external identities ----
+
+type ormIdentityRepo struct{}
+
+func (*ormIdentityRepo) Create(i *models.UserIdentity) error { return insert(i) }
+
+func (*ormIdentityRepo) GetByProviderSubject(provider, subject string) (*models.UserIdentity, error) {
+	i := &models.UserIdentity{}
+	return i, one(orm.NewOrm().QueryTable(i).Filter("provider", provider).Filter("subject", subject), i)
+}
+
+func (*ormIdentityRepo) ProvidersByUsers(userIDs []string) (map[string][]string, error) {
+	out := make(map[string][]string, len(userIDs))
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	var rows []*models.UserIdentity
+	if _, err := orm.NewOrm().QueryTable(new(models.UserIdentity)).Filter("user_id__in", userIDs).
+		All(&rows, "UserID", "Provider"); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		if k := r.UserID + "|" + r.Provider; !seen[k] {
+			seen[k] = true
+			out[r.UserID] = append(out[r.UserID], r.Provider)
+		}
+	}
+	for _, p := range out {
+		sort.Strings(p)
+	}
+	return out, nil
+}
+
+func (*ormIdentityRepo) DeleteByUser(userID string) error {
+	return deleteWhere(new(models.UserIdentity), "user_id", userID)
 }

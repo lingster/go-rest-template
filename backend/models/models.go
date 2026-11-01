@@ -37,6 +37,28 @@ type User struct {
 
 func (*User) TableName() string { return "users" }
 
+// HasPassword reports whether the account can sign in with a password. Accounts created through an
+// external identity provider (e.g. Google) have an empty hash, which never verifies.
+func (u *User) HasPassword() bool { return u.PasswordHash != "" }
+
+// Identity providers.
+const ProviderGoogle = "google"
+
+// UserIdentity links a user to an account at an external identity provider.
+type UserIdentity struct {
+	ID        string    `orm:"column(id);pk;size(36)"`
+	UserID    string    `orm:"column(user_id);size(36);index"`
+	Provider  string    `orm:"column(provider);size(32)"`
+	Subject   string    `orm:"column(subject);size(255)"` // provider-stable account id (Google "sub")
+	Email     string    `orm:"column(email);size(255)"`   // email at link time (informational)
+	CreatedAt time.Time `orm:"column(created_at);type(datetime)"`
+}
+
+func (*UserIdentity) TableName() string { return "user_identities" }
+
+// TableUnique makes (provider, subject) unique.
+func (*UserIdentity) TableUnique() [][]string { return [][]string{{"Provider", "Subject"}} }
+
 // RefreshToken is a hashed, rotating refresh token belonging to a family.
 type RefreshToken struct {
 	ID        string    `orm:"column(id);pk;size(36)"`
@@ -105,5 +127,5 @@ func (*AuditLog) TableName() string { return "audit_logs" }
 // Register registers all models with the Beego ORM.
 func Register() {
 	orm.RegisterModel(new(User), new(RefreshToken), new(OneTimeToken), new(RecoveryCode),
-		new(WebAuthnCredential), new(AuditLog))
+		new(WebAuthnCredential), new(AuditLog), new(UserIdentity))
 }

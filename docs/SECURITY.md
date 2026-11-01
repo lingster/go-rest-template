@@ -13,6 +13,14 @@
 - Avoid inline event handlers and inline styles; serve third-party libraries locally.
 - Serve the API with `Strict-Transport-Security`, `X-Content-Type-Options: nosniff` and a restrictive CORS allow-list (never `*` with credentials).
 
+## Sign in with Google
+
+- The server verifies the Google ID token itself (RS256 signature against Google's JWKS, `iss`, `aud` in `GOOGLE_CLIENT_IDS`, `exp`/`iat` with 30s leeway, `email_verified`). Never trust a client-supplied email.
+- Google is a first factor only: accounts with TOTP receive the usual MFA challenge.
+- Linking by email is safe only because Google asserts the email is verified. If the local account was never verified, its password, TOTP, passkeys and sessions are wiped on link (prevents pre-registration account takeover).
+- Google-created accounts have no password (empty hash, never verifies). Password-requiring flows: login fails generically, change-password returns 409 `password_not_set` (use the e-mail reset flow, which proves mailbox control), TOTP disable needs only the TOTP/recovery code.
+- Webapp CSP must allow `accounts.google.com` (script/frame/connect/style) only when Google sign-in is enabled.
+
 ## Rate limiting
 
 - Auth endpoints (login, register, forgot/reset password, resend verification, 2FA) must be rate limited per IP and per account; the API returns `429 rate_limited`.

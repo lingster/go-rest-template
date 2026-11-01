@@ -21,6 +21,8 @@ const (
 	CodeConflict           = "conflict"
 	CodeRateLimited        = "rate_limited"
 	CodeInternal           = "internal_error"
+	CodeGoogleDisabled     = "google_signin_disabled"
+	CodePasswordNotSet     = "password_not_set"
 )
 
 // Error is an error carrying an HTTP status and a contract error code.
@@ -63,6 +65,14 @@ func NotFound(msg string) *Error { return New(http.StatusNotFound, CodeNotFound,
 func Conflict(msg string) *Error { return New(http.StatusConflict, CodeConflict, msg) }
 func RateLimited() *Error {
 	return New(http.StatusTooManyRequests, CodeRateLimited, "Too many requests, slow down")
+}
+func GoogleDisabled() *Error {
+	return New(http.StatusNotFound, CodeGoogleDisabled, "Google sign-in is not enabled")
+}
+
+// PasswordNotSet is returned by password-based operations on accounts that have no password.
+func PasswordNotSet() *Error {
+	return New(http.StatusConflict, CodePasswordNotSet, "This account has no password. Use \"forgot password\" to set one")
 }
 func Internal() *Error {
 	return New(http.StatusInternalServerError, CodeInternal, "Internal server error")

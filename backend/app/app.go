@@ -23,12 +23,15 @@ import (
 	"github.com/lingster/go-rest-template/backend/mail"
 	"github.com/lingster/go-rest-template/backend/repositories"
 	_ "github.com/lingster/go-rest-template/backend/routers" // registers routes
+	"github.com/lingster/go-rest-template/backend/services"
 )
 
 // Options customises App construction.
 type Options struct {
 	// Mailer overrides the configured mail driver (tests).
 	Mailer mail.Mailer
+	// GoogleVerifier overrides the Google ID token verifier (tests).
+	GoogleVerifier services.GoogleTokenVerifier
 	// Assets holds the "swagger", "static" and "views" directories (normally //go:embed).
 	Assets fs.FS
 }
@@ -51,7 +54,7 @@ func New(cfg *config.Config, opts Options) (*App, error) {
 	if err := database.Init(cfg.DBDriver, cfg.DatabaseURL); err != nil {
 		return nil, err
 	}
-	c, err := container.New(cfg, repositories.NewORMSet(), opts.Mailer)
+	c, err := container.New(cfg, repositories.NewORMSet(), opts.Mailer, container.WithGoogleVerifier(opts.GoogleVerifier))
 	if err != nil {
 		return nil, err
 	}
