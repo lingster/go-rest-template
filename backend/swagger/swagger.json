@@ -1,0 +1,1421 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "title": "Go REST Template API",
+        "description": "JSON API for the SaaS starter template: auth (JWT + rotating refresh tokens), TOTP 2FA, WebAuthn passkeys, profile and admin endpoints. Errors use the envelope {\"error\":{\"code\",\"message\",\"details\"}}. Health check: GET /healthz.\n",
+        "version": "1.0.0",
+        "contact": {
+            "email": "ling@aidraw.ai"
+        },
+        "license": {
+            "name": "MIT"
+        }
+    },
+    "basePath": "/api/v1",
+    "paths": {
+        "/admin/audit-logs": {
+            "get": {
+                "tags": [
+                    "admin"
+                ],
+                "operationId": "AdminController.AuditLogs",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "page",
+                        "description": "Page (default 1)",
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    {
+                        "in": "query",
+                        "name": "per_page",
+                        "description": "Page size (default 20, max 100)",
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    {
+                        "in": "query",
+                        "name": "user_id",
+                        "description": "Filter by subject user id",
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AuditLogPage"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/stats": {
+            "get": {
+                "tags": [
+                    "admin"
+                ],
+                "operationId": "AdminController.Stats",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Stats"
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/users": {
+            "get": {
+                "tags": [
+                    "admin"
+                ],
+                "operationId": "AdminController.ListUsers",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "page",
+                        "description": "Page (default 1)",
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    {
+                        "in": "query",
+                        "name": "per_page",
+                        "description": "Page size (default 20, max 100)",
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    {
+                        "in": "query",
+                        "name": "q",
+                        "description": "Search email or name",
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.UserPage"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/users/{id}": {
+            "get": {
+                "tags": [
+                    "admin"
+                ],
+                "operationId": "AdminController.GetUser",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "User id",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.User"
+                        }
+                    },
+                    "404": {
+                        "description": "not_found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "admin"
+                ],
+                "operationId": "AdminController.DeleteUser",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "User id",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "403": {
+                        "description": "forbidden: cannot delete self"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "patch": {
+                "tags": [
+                    "admin"
+                ],
+                "operationId": "AdminController.UpdateUser",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "User id",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Fields to change",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.AdminUpdateUserRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.User"
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/admin/users/{id}/revoke-sessions": {
+            "post": {
+                "tags": [
+                    "admin"
+                ],
+                "operationId": "AdminController.RevokeSessions",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "User id",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/auth/forgot-password": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "description": "Always returns 202 (no user enumeration).\n\u003cbr\u003e",
+                "operationId": "AuthController.ForgotPassword",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Email",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Message"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "description": "Returns an AuthResponse, or an MfaChallenge (mfa_required=true) when 2FA is enabled.\n\u003cbr\u003e",
+                "operationId": "AuthController.Login",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Credentials",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.LoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AuthResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "invalid_credentials"
+                    },
+                    "403": {
+                        "description": "email_not_verified or account_disabled"
+                    },
+                    "429": {
+                        "description": "rate_limited"
+                    }
+                }
+            }
+        },
+        "/auth/login/2fa": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "description": "Exchange the mfa_token plus a TOTP or recovery code for a session.\n\u003cbr\u003e",
+                "operationId": "AuthController.LoginMFA",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "MFA token and code",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.MFALoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AuthResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "invalid_mfa_code, invalid_token or token_expired"
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "operationId": "AuthController.Logout",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Refresh token to revoke",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.RefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    }
+                }
+            }
+        },
+        "/auth/passkey/login/begin": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "description": "Omit email to use discoverable credentials.\n\u003cbr\u003e",
+                "operationId": "AuthController.PasskeyLoginBegin",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Optional email",
+                        "schema": {
+                            "$ref": "#/definitions/dto.PasskeyLoginBeginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CeremonyResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/passkey/login/finish": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "description": "A successful passkey login satisfies MFA.\n\u003cbr\u003e",
+                "operationId": "AuthController.PasskeyLoginFinish",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Session and credential",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.PasskeyFinishRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AuthResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "invalid_credentials"
+                    }
+                }
+            }
+        },
+        "/auth/refresh": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "description": "Rotating refresh; re-using a revoked token revokes the whole token family.\n\u003cbr\u003e",
+                "operationId": "AuthController.Refresh",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Refresh token",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.RefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Tokens"
+                        }
+                    },
+                    "401": {
+                        "description": "invalid_token or token_expired"
+                    }
+                }
+            }
+        },
+        "/auth/register": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "description": "Create a new account. Sends a verification email.\n\u003cbr\u003e",
+                "operationId": "AuthController.Register",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Account details",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.RegisterRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.RegisterResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "conflict: email already registered"
+                    },
+                    "422": {
+                        "description": "validation_error"
+                    },
+                    "429": {
+                        "description": "rate_limited"
+                    }
+                }
+            }
+        },
+        "/auth/resend-verification": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "description": "Always returns 202 to avoid leaking which emails exist.\n\u003cbr\u003e",
+                "operationId": "AuthController.ResendVerification",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Email",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Message"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/reset-password": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "description": "Sets a new password and revokes all refresh tokens of the user.\n\u003cbr\u003e",
+                "operationId": "AuthController.ResetPassword",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Reset token and new password",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.ResetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Message"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_token"
+                    },
+                    "422": {
+                        "description": "validation_error"
+                    }
+                }
+            }
+        },
+        "/auth/verify-email": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "operationId": "AuthController.VerifyEmail",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Verification token from the email link",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.TokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Message"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_token"
+                    }
+                }
+            }
+        },
+        "/me/": {
+            "get": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.Profile",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.User"
+                        }
+                    },
+                    "401": {
+                        "description": "unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "patch": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.UpdateProfile",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "New name",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateProfileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.User"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/me/2fa/recovery-codes": {
+            "post": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.RegenerateRecoveryCodes",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "TOTP or recovery code",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.RecoveryCodesResponse"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/me/2fa/totp/disable": {
+            "post": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.TOTPDisable",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Password and TOTP/recovery code",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.DisableTOTPRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Message"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/me/2fa/totp/enable": {
+            "post": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.TOTPEnable",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Current TOTP code",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.RecoveryCodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "invalid_mfa_code"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/me/2fa/totp/setup": {
+            "post": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.TOTPSetup",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.TOTPSetupResponse"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/me/change-password": {
+            "post": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.ChangePassword",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Current and new password",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.ChangePasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Message"
+                        }
+                    },
+                    "401": {
+                        "description": "invalid_credentials"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/me/passkeys": {
+            "get": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.ListPasskeys",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/dto.Passkey"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/me/passkeys/register/begin": {
+            "post": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.PasskeyRegisterBegin",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CeremonyResponse"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/me/passkeys/register/finish": {
+            "post": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.PasskeyRegisterFinish",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Session, name and credential",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.PasskeyRegisterFinishRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Passkey"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/me/passkeys/{id}": {
+            "delete": {
+                "tags": [
+                    "me"
+                ],
+                "operationId": "MeController.DeletePasskey",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "Passkey id",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "404": {
+                        "description": "not_found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        }
+    },
+    "definitions": {
+        "dto.AdminUpdateUserRequest": {
+            "title": "AdminUpdateUserRequest",
+            "type": "object",
+            "properties": {
+                "email_verified": {
+                    "type": "boolean"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "description": "user or admin",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AuditLog": {
+            "title": "AuditLog",
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "example": "login.success"
+                },
+                "actor_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "user_agent": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AuditLogPage": {
+            "title": "AuditLogPage",
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AuditLog"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "per_page": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "total": {
+                    "type": "integer",
+                    "format": "int64"
+                }
+            }
+        },
+        "dto.AuthResponse": {
+            "title": "AuthResponse",
+            "type": "object",
+            "properties": {
+                "mfa_required": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "tokens": {
+                    "$ref": "#/definitions/dto.Tokens"
+                },
+                "user": {
+                    "$ref": "#/definitions/dto.User"
+                }
+            }
+        },
+        "dto.CeremonyResponse": {
+            "title": "CeremonyResponse",
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.ChangePasswordRequest": {
+            "title": "ChangePasswordRequest",
+            "required": [
+                "current_password",
+                "new_password"
+            ],
+            "type": "object",
+            "properties": {
+                "current_password": {
+                    "type": "string"
+                },
+                "new_password": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CodeRequest": {
+            "title": "CodeRequest",
+            "required": [
+                "code"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.DisableTOTPRequest": {
+            "title": "DisableTOTPRequest",
+            "required": [
+                "password",
+                "code"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EmailRequest": {
+            "title": "EmailRequest",
+            "required": [
+                "email"
+            ],
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.LoginRequest": {
+            "title": "LoginRequest",
+            "required": [
+                "email",
+                "password"
+            ],
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.MFALoginRequest": {
+            "title": "MFALoginRequest",
+            "required": [
+                "mfa_token",
+                "code"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "6-digit TOTP code or a recovery code",
+                    "type": "string"
+                },
+                "mfa_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.Message": {
+            "title": "Message",
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.Passkey": {
+            "title": "Passkey",
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_used_at": {
+                    "description": "RFC3339 or null",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "MacBook"
+                }
+            }
+        },
+        "dto.PasskeyFinishRequest": {
+            "title": "PasskeyFinishRequest",
+            "required": [
+                "session_id"
+            ],
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.PasskeyLoginBeginRequest": {
+            "title": "PasskeyLoginBeginRequest",
+            "type": "object",
+            "properties": {
+                "email": {
+                    "description": "omit for discoverable credential login",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.PasskeyRegisterFinishRequest": {
+            "title": "PasskeyRegisterFinishRequest",
+            "required": [
+                "session_id"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "example": "MacBook"
+                },
+                "session_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.RecoveryCodesResponse": {
+            "title": "RecoveryCodesResponse",
+            "type": "object",
+            "properties": {
+                "recovery_codes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "dto.RefreshRequest": {
+            "title": "RefreshRequest",
+            "required": [
+                "refresh_token"
+            ],
+            "type": "object",
+            "properties": {
+                "refresh_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.RegisterRequest": {
+            "title": "RegisterRequest",
+            "required": [
+                "email",
+                "password",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "ada@example.com"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "password": {
+                    "description": "8-128 chars",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.RegisterResponse": {
+            "title": "RegisterResponse",
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "user": {
+                    "$ref": "#/definitions/dto.User"
+                }
+            }
+        },
+        "dto.ResetPasswordRequest": {
+            "title": "ResetPasswordRequest",
+            "required": [
+                "token",
+                "password"
+            ],
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.Stats": {
+            "title": "Stats",
+            "type": "object",
+            "properties": {
+                "users_2fa": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "users_active": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "users_total": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "users_verified": {
+                    "type": "integer",
+                    "format": "int64"
+                }
+            }
+        },
+        "dto.TOTPSetupResponse": {
+            "title": "TOTPSetupResponse",
+            "type": "object",
+            "properties": {
+                "otpauth_url": {
+                    "type": "string"
+                },
+                "secret": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.TokenRequest": {
+            "title": "TokenRequest",
+            "required": [
+                "token"
+            ],
+            "type": "object",
+            "properties": {
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.Tokens": {
+            "title": "Tokens",
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "description": "HS256 JWT",
+                    "type": "string"
+                },
+                "expires_in": {
+                    "description": "Access token lifetime in seconds",
+                    "type": "integer",
+                    "example": 900,
+                    "format": "int64"
+                },
+                "refresh_token": {
+                    "description": "Opaque rotating refresh token",
+                    "type": "string"
+                },
+                "token_type": {
+                    "type": "string",
+                    "example": "Bearer"
+                }
+            }
+        },
+        "dto.UpdateProfileRequest": {
+            "title": "UpdateProfileRequest",
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.User": {
+            "title": "User",
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "description": "RFC3339 UTC",
+                    "type": "string",
+                    "example": "2026-01-01T12:00:00Z"
+                },
+                "email": {
+                    "type": "string",
+                    "example": "ada@example.com"
+                },
+                "email_verified": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "description": "User UUID",
+                    "type": "string",
+                    "example": "6f1c1a0e-5a0e-4a3e-9f7a-3b1d2f6b7c11"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Ada"
+                },
+                "passkey_count": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "role": {
+                    "description": "user or admin",
+                    "type": "string",
+                    "example": "user"
+                },
+                "totp_enabled": {
+                    "type": "boolean"
+                },
+                "updated_at": {
+                    "description": "RFC3339 UTC",
+                    "type": "string",
+                    "example": "2026-01-01T12:00:00Z"
+                }
+            }
+        },
+        "dto.UserPage": {
+            "title": "UserPage",
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.User"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "per_page": {
+                    "type": "integer",
+                    "format": "int64"
+                },
+                "total": {
+                    "type": "integer",
+                    "format": "int64"
+                }
+            }
+        },
+        "dto.interface": {
+            "title": "interface",
+            "type": "object"
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "type": "apiKey",
+            "description": "Enter: Bearer \u003caccess_token\u003e",
+            "name": "Authorization",
+            "in": "header"
+        }
+    },
+    "tags": [
+        {
+            "name": "auth",
+            "description": "AuthController handles public authentication endpoints.\n"
+        },
+        {
+            "name": "me",
+            "description": "MeController handles the authenticated user's own account.\n"
+        },
+        {
+            "name": "admin",
+            "description": "AdminController handles admin-only endpoints (role=admin enforced by filters).\n"
+        }
+    ]
+}
