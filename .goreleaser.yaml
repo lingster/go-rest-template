@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: go-rest-template
+
+before:
+  hooks:
+    - sh -c "cd backend && go mod download"
+
+builds:
+  - id: server
+    dir: backend
+    main: .
+    binary: server
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+
+archives:
+  - id: server
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # Runtime assets keep their repo-relative paths (backend/swagger, ...).
+    # Copy swagger/, views/ and static/ next to the binary (the server's
+    # working directory) before running it.
+    files:
+      - README.md
+      - LICENSE
+      - backend/swagger/**
+      - backend/views/**
+      - backend/static/**
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
+
+release:
+  # The release is created by hand in the GitHub UI; only attach assets to it.
+  mode: keep-existing
+  replace_existing_artifacts: true

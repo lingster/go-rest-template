@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach artifacts to (e.g. v1.0.0)
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  binaries:
+    name: Go binaries (GoReleaser)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
+
+  flutter:
+    name: Flutter web + APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: flutter_app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # NOTE: the APK uses default debug signing. To sign for real, store a
+      # keystore as a secret, decode it here and reference it from
+      # android/key.properties (see flutter_app/README.md).
+      - name: Build web
+        run: flutter build web --release --dart-define=API_BASE_URL=${{ vars.API_BASE_URL }}
+      - name: Build APK
+        run: flutter build apk --release --dart-define=API_BASE_URL=${{ vars.API_BASE_URL }}
+      - name: Package and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          (cd build/web && zip -r "$GITHUB_WORKSPACE/flutter-web-${RELEASE_TAG}.zip" .)
+          cp build/app/outputs/flutter-apk/app-release.apk "$GITHUB_WORKSPACE/app-${RELEASE_TAG}.apk"
+          gh release upload "$RELEASE_TAG" \
+            "$GITHUB_WORKSPACE/flutter-web-${RELEASE_TAG}.zip" \
+            "$GITHUB_WORKSPACE/app-${RELEASE_TAG}.apk" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+  webapp:
+    name: Webapp build + Cloudflare deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+    defaults:
+      run:
+        working-directory: webapp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Package and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          (cd .svelte-kit/cloudflare && zip -r "$GITHUB_WORKSPACE/webapp-${RELEASE_TAG}.zip" .)
+          gh release upload "$RELEASE_TAG" "$GITHUB_WORKSPACE/webapp-${RELEASE_TAG}.zip" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Skip deploy notice
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
+        run: echo "::notice::CLOUDFLARE_API_TOKEN secret is not set; skipping Cloudflare deploy."
+      - name: Deploy to Cloudflare Workers
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: webapp
+          command: deploy
