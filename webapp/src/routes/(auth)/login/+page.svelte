@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { gotoPath } from '#lib/navigation.ts';
 	import { page } from '$app/state';
@@ -9,11 +8,12 @@
 	import Alert from '#lib/components/Alert.svelte';
 	import AuthShell from '#lib/components/AuthShell.svelte';
 	import Button from '#lib/components/Button.svelte';
+	import GoogleSignInButton from '#lib/components/GoogleSignInButton.svelte';
 	import FormField from '#lib/components/FormField.svelte';
 	import PasswordField from '#lib/components/PasswordField.svelte';
 	import { errorMessage, fieldErrors, safeRedirect } from '#lib/forms.ts';
 	import { isPasskeyCancelled, loginWithPasskey } from '#lib/passkeys.ts';
-	import { mfaChallenge } from '#lib/stores/mfa.svelte.ts';
+	import { finishLogin } from '#lib/login-flow.ts';
 	import { session } from '#lib/stores/session.svelte.ts';
 
 	let email = $state('');
@@ -43,14 +43,7 @@
 		unverified = false;
 		resendMessage = '';
 		try {
-			const res = await authApi.login({ email: email.trim(), password });
-			if (res.mfa_required) {
-				mfaChallenge.set(res.mfa_token, res.methods, redirectTo);
-				await goto(resolve('/(auth)/login/2fa'));
-			} else {
-				session.signIn(res);
-				await gotoPath(redirectTo);
-			}
+			await finishLogin(await authApi.login({ email: email.trim(), password }), redirectTo);
 		} catch (err) {
 			if (err instanceof ApiError && err.code === 'email_not_verified') unverified = true;
 			error = errorMessage(err);
@@ -129,6 +122,10 @@
 	<Button variant="secondary" fullWidth loading={passkeyLoading} onclick={signInWithPasskey}>
 		Sign in with passkey
 	</Button>
+	<GoogleSignInButton
+		onLogin={(res) => finishLogin(res, redirectTo)}
+		onError={(m) => (error = m)}
+	/>
 
 	{#snippet footer()}
 		No account yet? <a href={resolve('/(auth)/register')}>Create one</a>

@@ -13,6 +13,8 @@ const user: User = {
 	is_active: true,
 	totp_enabled: false,
 	passkey_count: 0,
+	has_password: true,
+	identities: [],
 	created_at: '',
 	updated_at: ''
 };

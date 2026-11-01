@@ -11,8 +11,15 @@ export interface User {
 	is_active: boolean;
 	totp_enabled: boolean;
 	passkey_count: number;
+	/** false for accounts created via Google until a password is set through the reset flow */
+	has_password: boolean;
+	identities: string[];
 	created_at: string;
 	updated_at: string;
+}
+
+export interface Providers {
+	google: { enabled: boolean; web_client_id: string };
 }
 
 export interface Tokens {

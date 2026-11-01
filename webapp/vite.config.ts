@@ -3,6 +3,7 @@ import { loadEnv } from 'vite';
 import { defineConfig } from 'vitest/config';
 import adapter from '@sveltejs/adapter-cloudflare';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { withGoogleCsp } from './src/lib/googleCsp.ts';
 
 const DEFAULT_API_URL = 'http://localhost:8080';
 
@@ -14,6 +15,12 @@ function apiOrigin(mode: string): `${string}://${string}.${string}` {
 	} catch {
 		return DEFAULT_API_URL as ReturnType<typeof apiOrigin>;
 	}
+}
+
+/** Opt in to the Google Identity Services CSP allowances (set together with GOOGLE_CLIENT_IDS on the API). */
+function googleSignInEnabled(mode: string): boolean {
+	const env = { ...loadEnv(mode, process.cwd(), 'PUBLIC_'), ...process.env };
+	return env.PUBLIC_GOOGLE_SIGNIN === 'true';
 }
 
 export default defineConfig(({ mode }) => ({
@@ -30,22 +37,25 @@ export default defineConfig(({ mode }) => ({
 			adapter: adapter(),
 			csp: {
 				mode: 'auto',
-				directives: {
-					'default-src': ['self'],
-					'script-src': ['self'],
-					'style-src': ['self'],
-					// Only SvelteKit's built-in route announcer (fixed inline style attribute).
-					'style-src-attr': [
-						'unsafe-hashes',
-						'sha256-S8qMpvofolR8Mpjy4kQvEm7m1q8clzU4dfDH0AmvZjo='
-					],
-					'connect-src': ['self', apiOrigin(mode)],
-					'img-src': ['self', 'data:'],
-					'frame-ancestors': ['none'],
-					'object-src': ['none'],
-					'base-uri': ['self'],
-					'form-action': ['self']
-				}
+				directives: withGoogleCsp(
+					{
+						'default-src': ['self'],
+						'script-src': ['self'],
+						'style-src': ['self'],
+						// Only SvelteKit's built-in route announcer (fixed inline style attribute).
+						'style-src-attr': [
+							'unsafe-hashes',
+							'sha256-S8qMpvofolR8Mpjy4kQvEm7m1q8clzU4dfDH0AmvZjo='
+						],
+						'connect-src': ['self', apiOrigin(mode)],
+						'img-src': ['self', 'data:'],
+						'frame-ancestors': ['none'],
+						'object-src': ['none'],
+						'base-uri': ['self'],
+						'form-action': ['self']
+					},
+					googleSignInEnabled(mode)
+				)
 			}
 		})
 	],
