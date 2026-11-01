@@ -14,6 +14,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/lingster/go-rest-template/backend/app"
+	"github.com/lingster/go-rest-template/backend/container"
 	"github.com/lingster/go-rest-template/backend/testutil"
 )
 
@@ -248,7 +249,12 @@ func TestTwoFactorLogin(t *testing.T) {
 	}
 	expect(t, call(t, "POST", "/api/v1/me/2fa/totp/enable", map[string]string{"code": "000000"}, access), 401, "invalid_mfa_code")
 	// Each TOTP step is accepted once, so successive uses move forward: previous, current, next step.
-	code, _ := totp.GenerateCode(secret, time.Now().Add(-30*time.Second))
+	clock := testutil.NewFakeClock()
+	mfa := container.Get().MFA
+	mfa.Now = clock.Now
+	defer func() { mfa.Now = time.Now }()
+	enableCode, _ := totp.GenerateCode(secret, clock.Now())
+	code := enableCode
 	en := call(t, "POST", "/api/v1/me/2fa/totp/enable", map[string]string{"code": code}, access)
 	expect(t, en, 200, "")
 	codes, _ := en.Body["recovery_codes"].([]interface{})
@@ -266,7 +272,8 @@ func TestTwoFactorLogin(t *testing.T) {
 
 	expect(t, call(t, "POST", "/api/v1/auth/login/2fa", map[string]string{"mfa_token": mfaTok, "code": "000000"}, ""), 401, "invalid_mfa_code")
 	expect(t, call(t, "POST", "/api/v1/auth/login/2fa", map[string]string{"mfa_token": "bad", "code": code}, ""), 401, "invalid_token")
-	code, _ = totp.GenerateCode(secret, time.Now())
+	clock.Advance(30 * time.Second)
+	code, _ = totp.GenerateCode(secret, clock.Now())
 	ok := call(t, "POST", "/api/v1/auth/login/2fa", map[string]string{"mfa_token": mfaTok, "code": code}, "")
 	expect(t, ok, 200, "")
 	if ok.str("tokens", "access_token") == "" || ok.str("user", "email") != email || ok.Body["user"].(map[string]interface{})["totp_enabled"] != true {
@@ -274,8 +281,7 @@ func TestTwoFactorLogin(t *testing.T) {
 	}
 	// replay of the same code (same step) is rejected, as is an older step
 	expect(t, call(t, "POST", "/api/v1/auth/login/2fa", map[string]string{"mfa_token": mfaTok, "code": code}, ""), 401, "invalid_mfa_code")
-	old, _ := totp.GenerateCode(secret, time.Now().Add(-30*time.Second))
-	expect(t, call(t, "POST", "/api/v1/auth/login/2fa", map[string]string{"mfa_token": mfaTok, "code": old}, ""), 401, "invalid_mfa_code")
+	expect(t, call(t, "POST", "/api/v1/auth/login/2fa", map[string]string{"mfa_token": mfaTok, "code": enableCode}, ""), 401, "invalid_mfa_code")
 	// an mfa token is not an access token
 	expect(t, call(t, "GET", "/api/v1/me", nil, mfaTok), 401, "invalid_token")
 
@@ -287,7 +293,8 @@ func TestTwoFactorLogin(t *testing.T) {
 
 	// disable
 	access2 := ok.str("tokens", "access_token")
-	code, _ = totp.GenerateCode(secret, time.Now().Add(30*time.Second))
+	clock.Advance(30 * time.Second)
+	code, _ = totp.GenerateCode(secret, clock.Now())
 	expect(t, call(t, "POST", "/api/v1/me/2fa/totp/disable", map[string]string{"password": "wrong", "code": code}, access2), 401, "invalid_credentials")
 	expect(t, call(t, "POST", "/api/v1/me/2fa/totp/disable", map[string]string{"password": password, "code": code}, access2), 200, "")
 	r := call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, "")

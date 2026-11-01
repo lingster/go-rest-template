@@ -154,6 +154,8 @@ func TestTOTPAndRecoveryCodes(t *testing.T) {
 	u := newUser(t, c)
 	u.PasswordHash = hash
 	_ = c.Repos.Users.Update(u, "PasswordHash")
+	clock := testutil.NewFakeClock()
+	c.MFA.Now = clock.Now
 
 	secret, url, err := c.MFA.Setup(u)
 	if err != nil || secret == "" || !strings.HasPrefix(url, "otpauth://totp/") {
@@ -165,8 +167,9 @@ func TestTOTPAndRecoveryCodes(t *testing.T) {
 	if _, err := c.MFA.Enable(ctx, u, "000000"); code(t, err) != apperr.CodeInvalidMFACode {
 		t.Fatalf("wrong code accepted: %v", err)
 	}
-	prev, _ := totp.GenerateCode(secret, time.Now().Add(-30*time.Second))
-	good, _ := totp.GenerateCode(secret, time.Now())
+	prev, _ := totp.GenerateCode(secret, clock.Now())
+	clock.Advance(30 * time.Second)
+	good, _ := totp.GenerateCode(secret, clock.Now())
 	codes, err := c.MFA.Enable(ctx, u, prev)
 	if err != nil {
 		t.Fatalf("enable: %v", err)

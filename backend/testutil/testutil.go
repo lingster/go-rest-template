@@ -99,6 +99,28 @@ func (m *MemMailer) LastToken(to, subjectPart string) string {
 	return ""
 }
 
+// FakeClock is a controllable clock for deterministic TOTP tests.
+type FakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+// NewFakeClock pins time mid-way through a 30s TOTP step (1_800_000_015 mod 30 == 15).
+func NewFakeClock() *FakeClock { return &FakeClock{t: time.Unix(1_800_000_015, 0)} }
+
+func (c *FakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+// Advance moves the clock forward.
+func (c *FakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
+
 // LastSubject returns the subject of the latest message to the address.
 func (m *MemMailer) LastSubject(to string) string {
 	m.mu.Lock()
