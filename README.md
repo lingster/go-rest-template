@@ -9,9 +9,10 @@ A SaaS starter template: a Go/Beego REST API with complete authentication, a Flu
 - JWT access tokens with refresh token rotation and reuse detection
 - TOTP two-factor auth with recovery codes
 - Passkeys (WebAuthn) for login and as an MFA factor
+- TOTP replay protection, rate limiting on auth endpoints, audit log, strict CSP
 - Admin API and admin UI
 - OpenAPI/Swagger docs at `/swagger/`
-- Flutter app (Android, iOS, web)
+- Flutter app (Android, iOS, web) with biometric unlock (Face ID / Touch ID / fingerprint)
 - SvelteKit webapp on Cloudflare Workers
 - GitHub Actions CI and tag-driven releases
 
