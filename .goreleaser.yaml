@@ -28,15 +28,10 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
-    # Runtime assets keep their repo-relative paths (backend/swagger, ...).
-    # Copy swagger/, views/ and static/ next to the binary (the server's
-    # working directory) before running it.
+    # Swagger, views and static assets are embedded in the binary (go:embed).
     files:
       - README.md
       - LICENSE
-      - backend/swagger/**
-      - backend/views/**
-      - backend/static/**
 
 checksum:
   name_template: checksums.txt
