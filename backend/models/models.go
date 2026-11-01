@@ -30,6 +30,7 @@ type User struct {
 	IsActive      bool      `orm:"column(is_active)"`
 	TOTPSecret    string    `orm:"column(totp_secret);size(512)"` // AES-GCM encrypted, base64
 	TOTPEnabled   bool      `orm:"column(totp_enabled)"`
+	TOTPLastStep  int64     `orm:"column(totp_last_step)"` // last accepted 30s time-step (replay protection)
 	CreatedAt     time.Time `orm:"column(created_at);type(datetime)"`
 	UpdatedAt     time.Time `orm:"column(updated_at);type(datetime)"`
 }

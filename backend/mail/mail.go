@@ -134,3 +134,15 @@ func VerifyEmail(to, name, link string) Message { return render(verifyTmpl, to, 
 
 // ResetPassword builds the password reset email.
 func ResetPassword(to, name, link string) Message { return render(resetTmpl, to, name, link) }
+
+// PasswordChanged builds the "your password was changed" notification.
+func PasswordChanged(to, name string) Message {
+	return Message{
+		To: to, Subject: "Your password was changed",
+		Text: fmt.Sprintf("Hi %s,\n\nThe password for your account was just changed and all your sessions were signed out.\n"+
+			"If this was not you, reset your password immediately and contact support.\n", name),
+		HTML: "<!doctype html><html><body><p>Hi " + htmltemplate.HTMLEscapeString(name) +
+			",</p><p>The password for your account was just changed and all your sessions were signed out.</p>" +
+			"<p>If this was not you, reset your password immediately and contact support.</p></body></html>",
+	}
+}

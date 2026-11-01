@@ -99,6 +99,18 @@ func (m *MemMailer) LastToken(to, subjectPart string) string {
 	return ""
 }
 
+// LastSubject returns the subject of the latest message to the address.
+func (m *MemMailer) LastSubject(to string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := len(m.Sent) - 1; i >= 0; i-- {
+		if m.Sent[i].To == to {
+			return m.Sent[i].Subject
+		}
+	}
+	return ""
+}
+
 // Count returns the number of messages sent to the address.
 func (m *MemMailer) Count(to string) int {
 	m.mu.Lock()

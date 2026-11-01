@@ -313,6 +313,10 @@ func (s *AuthService) ChangePassword(ctx context.Context, u *models.User, curren
 	if err := s.users.Update(u, "PasswordHash", "UpdatedAt"); err != nil {
 		return err
 	}
+	if err := s.tokens.RevokeAll(u.ID); err != nil {
+		return err
+	}
+	s.sendMail(ctx, mail.PasswordChanged(u.Email, u.Name))
 	s.audit.Log(ctx, AuditPasswordChange, u.ID, u.ID, nil)
 	return nil
 }

@@ -129,4 +129,16 @@ forgot/reset, 2FA login, admin access control, CSP/CORS/swagger) against a temp 
 * WebAuthn ceremony sessions live in memory (`services.SessionStore`); use a shared store for multi-instance deployments.
 * Rate limiter is in-memory per instance. Schema is created with `orm.RunSyncdb` (creates missing tables, does not alter
   existing ones) - add real migrations before changing models in production.
-* `POST /me/change-password` does not revoke other sessions; `reset-password` and admin disable do.
+* TOTP replay protection: the last accepted 30s time-step is stored per user (`users.totp_last_step`); a code whose
+  step is <= the last used one is rejected (skew of one step either side). Databases created before this column existed need
+  `ALTER TABLE users ADD COLUMN totp_last_step bigint NOT NULL DEFAULT 0` because `RunSyncdb` does not alter tables.
+
+## Contract-compat notes (behaviour beyond / around `docs/API_CONTRACT.md`)
+
+* `POST /me/change-password` revokes **all** the user's refresh tokens (including the caller's) and emails a "your password
+  was changed" notification. Clients keep their current access token until it expires (default 15m) and must log in again
+  once it does; a 401 on the next `/auth/refresh` is expected.
+* `reset-password` and admin disable/revoke-sessions also revoke all refresh tokens.
+* `POST /auth/passkey/login/begin` never reveals whether an email exists: an unknown email, or one without passkeys, gets a
+  discoverable-credential ceremony with the same response shape as omitting the email.
+* One-time token (verify/reset) failures are `400 invalid_token`; admins cannot delete, demote or deactivate themselves (`403 forbidden`).

@@ -234,24 +234,30 @@ func (s *PasskeyService) BeginLogin(email string) (string, *protocol.CredentialA
 		userID  string
 		err     error
 	)
-	if email == "" {
-		opts, session, err = s.wa.BeginDiscoverableLogin()
-	} else {
+	var w *waUser
+	if email != "" {
 		u, uerr := s.users.GetByEmail(email)
-		if errors.Is(uerr, repositories.ErrNotFound) {
-			return "", nil, apperr.InvalidCredentials()
-		} else if uerr != nil {
+		switch {
+		case errors.Is(uerr, repositories.ErrNotFound):
+		case uerr != nil:
 			return "", nil, uerr
+		default:
+			lw, lerr := s.load(u)
+			if lerr != nil {
+				return "", nil, lerr
+			}
+			if len(lw.creds) > 0 {
+				w = lw
+			}
 		}
-		w, lerr := s.load(u)
-		if lerr != nil {
-			return "", nil, lerr
-		}
-		if len(w.creds) == 0 {
-			return "", nil, apperr.InvalidCredentials()
-		}
-		userID = u.ID
+	}
+	if w != nil {
+		userID = w.u.ID
 		opts, session, err = s.wa.BeginLogin(w)
+	} else {
+		// No email, unknown email or no passkeys: answer with a discoverable ceremony so the
+		// response is indistinguishable (no user enumeration).
+		opts, session, err = s.wa.BeginDiscoverableLogin()
 	}
 	if err != nil {
 		return "", nil, err

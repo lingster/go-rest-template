@@ -67,6 +67,12 @@ func (*ormUserRepo) Update(u *models.User, columns ...string) error { return upd
 
 func (*ormUserRepo) Delete(id string) error { return deleteWhere(new(models.User), "id", id) }
 
+func (*ormUserRepo) AdvanceTOTPStep(id string, step int64) (bool, error) {
+	n, err := orm.NewOrm().QueryTable(new(models.User)).Filter("id", id).Filter("totp_last_step__lt", step).
+		Update(orm.Params{"totp_last_step": step})
+	return n > 0, err
+}
+
 func (*ormUserRepo) List(q string, offset, limit int) ([]*models.User, int64, error) {
 	qs := orm.NewOrm().QueryTable(new(models.User))
 	if q = strings.TrimSpace(q); q != "" {

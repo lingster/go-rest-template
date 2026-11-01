@@ -199,6 +199,37 @@ func TestForgotAndResetPassword(t *testing.T) {
 	expect(t, call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": "brand new password"}, ""), 200, "")
 }
 
+func TestPasskeyLoginBeginIndistinguishable(t *testing.T) {
+	email, _, _ := newVerifiedUser(t, "pk") // exists, no passkeys
+	shape := func(body interface{}) (string, bool, string) {
+		r := call(t, "POST", "/api/v1/auth/passkey/login/begin", body, "")
+		if r.Status != 200 || r.str("session_id") == "" {
+			t.Fatalf("expected 200 with session: %d %s", r.Status, r.Raw)
+		}
+		pk, _ := r.Body["options"].(map[string]interface{})["publicKey"].(map[string]interface{})
+		_, hasAllow := pk["allowCredentials"]
+		return pk["rpId"].(string), hasAllow, r.str("options", "publicKey", "userVerification")
+	}
+	a1, a2, a3 := shape(map[string]string{"email": email})
+	b1, b2, b3 := shape(map[string]string{"email": "ghost@example.com"})
+	c1, c2, c3 := shape(nil)
+	if a1 != b1 || b1 != c1 || a2 != b2 || b2 != c2 || a3 != b3 || b3 != c3 {
+		t.Fatalf("responses differ: (%v %v %v) (%v %v %v) (%v %v %v)", a1, a2, a3, b1, b2, b3, c1, c2, c3)
+	}
+}
+
+func TestChangePasswordRevokesSessionsAndNotifies(t *testing.T) {
+	email, access, refresh := newVerifiedUser(t, "chpw2")
+	before := mailer.Count(email)
+	expect(t, call(t, "POST", "/api/v1/me/change-password", map[string]string{"current_password": password, "new_password": "a brand new one"}, access), 200, "")
+	expect(t, call(t, "POST", "/api/v1/auth/refresh", map[string]string{"refresh_token": refresh}, ""), 401, "invalid_token")
+	if mailer.Count(email) != before+1 || mailer.LastSubject(email) != "Your password was changed" {
+		t.Fatalf("notification email missing (subject %q)", mailer.LastSubject(email))
+	}
+	// the current access token keeps working until it expires
+	expect(t, call(t, "GET", "/api/v1/me", nil, access), 200, "")
+}
+
 func TestChangePassword(t *testing.T) {
 	email, access, _ := newVerifiedUser(t, "chpw")
 	expect(t, call(t, "POST", "/api/v1/me/change-password", map[string]string{"current_password": "nope", "new_password": "a brand new one"}, access), 401, "invalid_credentials")
@@ -216,7 +247,8 @@ func TestTwoFactorLogin(t *testing.T) {
 		t.Fatalf("bad setup: %s", setup.Raw)
 	}
 	expect(t, call(t, "POST", "/api/v1/me/2fa/totp/enable", map[string]string{"code": "000000"}, access), 401, "invalid_mfa_code")
-	code, _ := totp.GenerateCode(secret, time.Now())
+	// Each TOTP step is accepted once, so successive uses move forward: previous, current, next step.
+	code, _ := totp.GenerateCode(secret, time.Now().Add(-30*time.Second))
 	en := call(t, "POST", "/api/v1/me/2fa/totp/enable", map[string]string{"code": code}, access)
 	expect(t, en, 200, "")
 	codes, _ := en.Body["recovery_codes"].([]interface{})
@@ -240,6 +272,10 @@ func TestTwoFactorLogin(t *testing.T) {
 	if ok.str("tokens", "access_token") == "" || ok.str("user", "email") != email || ok.Body["user"].(map[string]interface{})["totp_enabled"] != true {
 		t.Fatalf("bad 2fa login: %s", ok.Raw)
 	}
+	// replay of the same code (same step) is rejected, as is an older step
+	expect(t, call(t, "POST", "/api/v1/auth/login/2fa", map[string]string{"mfa_token": mfaTok, "code": code}, ""), 401, "invalid_mfa_code")
+	old, _ := totp.GenerateCode(secret, time.Now().Add(-30*time.Second))
+	expect(t, call(t, "POST", "/api/v1/auth/login/2fa", map[string]string{"mfa_token": mfaTok, "code": old}, ""), 401, "invalid_mfa_code")
 	// an mfa token is not an access token
 	expect(t, call(t, "GET", "/api/v1/me", nil, mfaTok), 401, "invalid_token")
 
@@ -251,7 +287,7 @@ func TestTwoFactorLogin(t *testing.T) {
 
 	// disable
 	access2 := ok.str("tokens", "access_token")
-	code, _ = totp.GenerateCode(secret, time.Now())
+	code, _ = totp.GenerateCode(secret, time.Now().Add(30*time.Second))
 	expect(t, call(t, "POST", "/api/v1/me/2fa/totp/disable", map[string]string{"password": "wrong", "code": code}, access2), 401, "invalid_credentials")
 	expect(t, call(t, "POST", "/api/v1/me/2fa/totp/disable", map[string]string{"password": password, "code": code}, access2), 200, "")
 	r := call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, "")
@@ -385,7 +421,8 @@ var (
 )
 
 func TestAdminUICSP(t *testing.T) {
-	for _, p := range []string{"/admin-ui", "/admin-ui/", "/admin-ui/dashboard", "/admin-ui/users", "/admin-ui/audit"} {
+	for _, p := range []string{"/admin-ui", "/admin-ui/", "/admin-ui/dashboard", "/admin-ui/users", "/admin-ui/audit",
+		"/admin-ui/dashboard/", "/admin-ui/users/", "/admin-ui/audit/"} {
 		r := call(t, "GET", p, nil, "")
 		if r.Status != 200 {
 			t.Fatalf("%s: %d %s", p, r.Status, r.Raw)

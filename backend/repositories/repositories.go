@@ -27,6 +27,8 @@ type UserRepository interface {
 	// Update writes the named columns (all columns when none given).
 	Update(u *models.User, columns ...string) error
 	Delete(id string) error
+	// AdvanceTOTPStep atomically sets totp_last_step=step iff it is greater than the stored value.
+	AdvanceTOTPStep(id string, step int64) (bool, error)
 	List(query string, offset, limit int) ([]*models.User, int64, error)
 	Stats() (UserStats, error)
 }

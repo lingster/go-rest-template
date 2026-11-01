@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"math/big"
 	"strings"
@@ -21,6 +22,7 @@ const (
 	RecoveryCodeCount = 10
 	recoveryAlphabet  = "abcdefghjkmnpqrstuvwxyz23456789"
 	recoveryLen       = 10
+	totpPeriod        = 30 // seconds per TOTP time-step
 )
 
 // MFAService manages TOTP enrolment/verification and recovery codes.
@@ -52,9 +54,9 @@ func (m *MFAService) Setup(u *models.User) (secret, otpauthURL string, err error
 	if err != nil {
 		return "", "", err
 	}
-	u.TOTPSecret = sealed
+	u.TOTPSecret, u.TOTPLastStep = sealed, 0
 	u.UpdatedAt = m.Now().UTC()
-	if err := m.users.Update(u, "TOTPSecret", "UpdatedAt"); err != nil {
+	if err := m.users.Update(u, "TOTPSecret", "TOTPLastStep", "UpdatedAt"); err != nil {
 		return "", "", err
 	}
 	return key.Secret(), key.URL(), nil
@@ -68,10 +70,25 @@ func (m *MFAService) validateTOTP(u *models.User, code string) bool {
 	if err != nil {
 		return false
 	}
-	ok, err := totp.ValidateCustom(code, secret, m.Now().UTC(), totp.ValidateOpts{
-		Period: 30, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
-	})
-	return err == nil && ok
+	opts := totp.ValidateOpts{Period: totpPeriod, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1}
+	cur := m.Now().UTC().Unix() / totpPeriod
+	for step := cur - 1; step <= cur+1; step++ { // skew of one step either side
+		want, err := totp.GenerateCodeCustom(secret, time.Unix(step*totpPeriod, 0).UTC(), opts)
+		if err != nil || subtle.ConstantTimeCompare([]byte(want), []byte(code)) != 1 {
+			continue
+		}
+		// Replay protection: a step may be accepted only once, and never an older one than the last used.
+		if step <= u.TOTPLastStep {
+			return false
+		}
+		won, err := m.users.AdvanceTOTPStep(u.ID, step)
+		if err != nil || !won {
+			return false
+		}
+		u.TOTPLastStep = step
+		return true
+	}
+	return false
 }
 
 // Enable activates TOTP after verifying a code, and returns fresh recovery codes.
@@ -111,9 +128,9 @@ func (m *MFAService) Disable(ctx context.Context, u *models.User, password, code
 	} else if !ok {
 		return apperr.InvalidMFACode()
 	}
-	u.TOTPEnabled, u.TOTPSecret = false, ""
+	u.TOTPEnabled, u.TOTPSecret, u.TOTPLastStep = false, "", 0
 	u.UpdatedAt = m.Now().UTC()
-	if err := m.users.Update(u, "TOTPEnabled", "TOTPSecret", "UpdatedAt"); err != nil {
+	if err := m.users.Update(u, "TOTPEnabled", "TOTPSecret", "TOTPLastStep", "UpdatedAt"); err != nil {
 		return err
 	}
 	if err := m.recovery.DeleteByUser(u.ID); err != nil {

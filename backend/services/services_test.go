@@ -165,8 +165,9 @@ func TestTOTPAndRecoveryCodes(t *testing.T) {
 	if _, err := c.MFA.Enable(ctx, u, "000000"); code(t, err) != apperr.CodeInvalidMFACode {
 		t.Fatalf("wrong code accepted: %v", err)
 	}
+	prev, _ := totp.GenerateCode(secret, time.Now().Add(-30*time.Second))
 	good, _ := totp.GenerateCode(secret, time.Now())
-	codes, err := c.MFA.Enable(ctx, u, good)
+	codes, err := c.MFA.Enable(ctx, u, prev)
 	if err != nil {
 		t.Fatalf("enable: %v", err)
 	}
@@ -174,9 +175,19 @@ func TestTOTPAndRecoveryCodes(t *testing.T) {
 		t.Fatalf("expected 10 codes and enabled, got %d", len(codes))
 	}
 
-	// TOTP verifies; garbage does not.
+	// Replay protection: the enabling step cannot be reused, a newer step works once.
+	if ok, _ := c.MFA.VerifyCode(u, prev); ok {
+		t.Error("TOTP step replayed after enable")
+	}
 	if ok, _ := c.MFA.VerifyCode(u, good); !ok {
 		t.Error("valid TOTP rejected")
+	}
+	if ok, _ := c.MFA.VerifyCode(u, good); ok {
+		t.Error("TOTP code accepted twice")
+	}
+	fresh, _ := c.Repos.Users.GetByID(u.ID)
+	if fresh.TOTPLastStep != u.TOTPLastStep || u.TOTPLastStep == 0 {
+		t.Errorf("last step not persisted: db=%d mem=%d", fresh.TOTPLastStep, u.TOTPLastStep)
 	}
 	if ok, _ := c.MFA.VerifyCode(u, "123456"); ok && good != "123456" {
 		t.Error("invalid TOTP accepted")
