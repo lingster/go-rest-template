@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.out.outputs.backend }}
+      flutter: ${{ steps.out.outputs.flutter }}
+      webapp: ${{ steps.out.outputs.webapp }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+            flutter:
+              - 'flutter_app/**'
+              - '.github/workflows/ci.yml'
+            webapp:
+              - 'webapp/**'
+              - '.github/workflows/ci.yml'
+      # On push to main everything runs; on PRs only changed projects.
+      - id: out
+        env:
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+          BACKEND: ${{ steps.filter.outputs.backend }}
+          FLUTTER: ${{ steps.filter.outputs.flutter }}
+          WEBAPP: ${{ steps.filter.outputs.webapp }}
+        run: |
+          if [ "$IS_PR" = "true" ]; then
+            {
+              echo "backend=${BACKEND}"
+              echo "flutter=${FLUTTER}"
+              echo "webapp=${WEBAPP}"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "backend=true"
+              echo "flutter=true"
+              echo "webapp=true"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+  backend:
+    name: Backend (Go)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Install bee
+        run: go install github.com/beego/bee/v2@latest
+      - name: Swagger docs are up to date
+        run: make docs && git diff --exit-code -- swagger routers
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: false
+          tags: go-rest-template-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  flutter:
+    name: Flutter
+    needs: changes
+    if: needs.changes.outputs.flutter == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter_app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  webapp:
+    name: Webapp (SvelteKit)
+    needs: changes
+    if: needs.changes.outputs.webapp == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
+        env:
+          PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
