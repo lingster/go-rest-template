@@ -35,6 +35,8 @@ jobs:
               - '.github/workflows/ci.yml'
             flutter:
               - 'flutter_app/**'
+              - 'tool/**'
+              - 'Gemfile*'
               - '.github/workflows/ci.yml'
             webapp:
               - 'webapp/**'
@@ -114,6 +116,10 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+      # Store listing limits (text, keywords, image sizes) and release helpers.
+      - name: Store listing and release tooling tests
+        working-directory: .
+        run: for t in tool/fastlane/*_test.rb; do ruby "$t"; done
 
   webapp:
     name: Webapp (SvelteKit)

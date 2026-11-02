@@ -1,0 +1,17 @@
+# App icons from assets/icon (placeholder cube on the app's indigo; swap the
+# SVG/PNGs for your artwork, see the README, "Customise your store listing").
+# Regenerate after changing them:  dart run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: assets/icon/icon-1024.png      # full-bleed, no alpha (App Store requirement)
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  min_sdk_android: 24
+  adaptive_icon_background: "#3F3BC4"
+  adaptive_icon_foreground: assets/icon/icon-foreground.png
+  adaptive_icon_foreground_inset: 16
+  web:
+    generate: true
+    image_path: assets/icon/icon-1024.png
+    background_color: "#FFFFFF"
+    theme_color: "#4F46E5"

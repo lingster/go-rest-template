@@ -1,8 +1,30 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// Release signing: env vars (CI) win over android/key.properties (local).
+// Neither present -> debug signing with a warning (not distributable), so a
+// plain `flutter build apk --release` keeps working. See docs/STORES.md.
+val keyProps = Properties().apply {
+    val f = rootProject.file("key.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
+fun signingValue(env: String, prop: String): String? =
+    System.getenv(env)?.takeIf { it.isNotBlank() }
+        ?: keyProps.getProperty(prop)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = signingValue("APP_KEYSTORE_PATH", "storeFile")
+val releaseStorePassword = signingValue("APP_KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = signingValue("APP_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = signingValue("APP_KEY_PASSWORD", "keyPassword")
+val hasReleaseSigning = listOf(
+    releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword,
+).all { it != null }
 
 android {
     namespace = "com.example.saas_app"
@@ -29,11 +51,31 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                // Relative paths in key.properties resolve against android/.
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "WARNING: no release signing config (set APP_KEYSTORE_PATH/" +
+                        "APP_KEYSTORE_PASSWORD/APP_KEY_ALIAS/APP_KEY_PASSWORD " +
+                        "or create android/key.properties). Signing the release " +
+                        "build with the DEBUG key: do not distribute it.",
+                )
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

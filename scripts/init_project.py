@@ -93,7 +93,10 @@ VALIDATORS = {
     "tagline": (r"^[^\r\n]{1,100}$", "one line, up to 100 characters"),
     "site_url": (r"^https://[^/\s?#]+(/[^\s?#]*)?$", "an https URL such as https://example.com"),
 }
-OPTIONAL = {"google_web_client_id", "google_ios_client_id"}
+# --- store release (apple_team_id) ---
+VALIDATORS["apple_team_id"] = (r"^[A-Z0-9]{10}$", "a 10-character Apple developer team id, e.g. ABCDE12345")
+# --- end store release ---
+OPTIONAL = {"google_web_client_id", "google_ios_client_id", "apple_team_id"}
 
 
 @dataclass
@@ -113,6 +116,8 @@ class Settings:
     # Landing page (backend/conf/landing.json) and webapp SEO constants.
     tagline: str = DEFAULT_TAGLINE
     site_url: str = DEFAULT_SITE_URL
+    # Optional Apple developer team id for the iOS store build (also settable later via the APPLE_TEAM_ID repo variable).
+    apple_team_id: str = ""
 
     def validate(self) -> list[str]:
         errors = []
@@ -160,6 +165,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--google-ios-client-id", default="", help="Google iOS OAuth client id (optional)")
     p.add_argument("--tagline", help=f'one-line pitch for the landing page and web app (default: "{DEFAULT_TAGLINE}")')
     p.add_argument("--site-url", help=f"public URL of the landing page, https (default: {DEFAULT_SITE_URL})")
+    p.add_argument("--apple-team-id", default="",
+                   help="Apple developer team id (10 chars) baked into tool/fastlane/app_config.rb; optional, "
+                        "else set the APPLE_TEAM_ID repo variable")
     p.add_argument("-y", "--yes", action="store_true", help="no prompts: use flags and defaults")
     p.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
     p.add_argument("--skip-docs", action="store_true", help="don't regenerate swagger (make docs)")
@@ -193,6 +201,7 @@ def resolve(args: argparse.Namespace, ask) -> Settings:
         google_ios_client_id=args.google_ios_client_id.strip(),
         tagline=get("tagline", DEFAULT_TAGLINE),
         site_url=get("site_url", DEFAULT_SITE_URL),
+        apple_team_id=args.apple_team_id.strip(),
     )
 
 
@@ -371,6 +380,30 @@ def configure_landing(root: Path, s: Settings, dry_run: bool, today: str | None 
             if not dry_run:
                 path.write_text(new, encoding="utf-8")
     return touched
+# --- store release ---------------------------------------------------------------
+APP_CONFIG = Path("tool/fastlane/app_config.rb")
+STORE_NAME_LIMIT = 30  # App Store / Play title limit (tool/fastlane/listing.rb)
+
+
+def configure_apple(root: Path, s: Settings, dry_run: bool) -> bool:
+    """Bake the optional Apple team id into the one app-config file of the release tooling."""
+    path = root / APP_CONFIG
+    if not s.apple_team_id or not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    new = re.sub(r'(DEFAULT_APPLE_TEAM_ID = )"[^"]*"', lambda m: f'{m.group(1)}"{s.apple_team_id}"', text)
+    if new != text and not dry_run:
+        path.write_text(new, encoding="utf-8")
+    return new != text
+
+
+def store_warnings(s: Settings) -> list[str]:
+    """Listing files use the app name as the store title, which both stores cap at 30 characters."""
+    if len(s.name) > STORE_NAME_LIMIT:
+        return [f"app name is {len(s.name)} characters; store titles allow {STORE_NAME_LIMIT}. "
+                "Shorten flutter_app/**/name.txt and title.txt (tool/fastlane/listing_test.rb checks it)."]
+    return []
+# --- end store release -----------------------------------------------------------
 
 
 def move_main_activity(root: Path, bundle_id: str, dry_run: bool) -> Path | None:
@@ -432,6 +465,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
     count = rewrite_files(root, settings.replacements(), args.dry_run)
     google_files = configure_google(root, settings, args.dry_run)
     landing_files = configure_landing(root, settings, args.dry_run)
+    apple = configure_apple(root, settings, args.dry_run)
     activity = move_main_activity(root, settings.bundle_id, args.dry_run)
     verb = "Would update" if args.dry_run else "Updated"
     print(f"{verb} {count} files.")
@@ -439,6 +473,10 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
         print("Sign in with Google pre-configured in: " + ", ".join(google_files))
     if landing_files:
         print("Landing page and SEO configured in: " + ", ".join(landing_files))
+    if apple:
+        print(f"Apple team id set in {APP_CONFIG}")
+    for warning in store_warnings(settings):
+        print(f"Warning: {warning}")
     if activity:
         print(f"MainActivity.kt -> {activity.relative_to(root)}")
     if args.dry_run:
@@ -455,7 +493,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
         "  2. Add CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID secrets and PUBLIC_API_URL / API_BASE_URL variables.\n"
         "  3. Optional: Sign in with Google (disabled until GOOGLE_CLIENT_IDS is set), see README.\n"
         "  4. Replace the placeholder copy and images in backend/conf/landing.json (see README: Customise your landing page).\n"
-        "  5. git add -A && git commit -m 'chore: initialise project from template'"
+        "  5. Store release (optional): edit the listing placeholders and see docs/STORES.md (README: ASO).\n"
+        "  6. git add -A && git commit -m 'chore: initialise project from template'"
     )
     return 0
 

@@ -1,0 +1,47 @@
+name: Play listing
+
+# Manual only: uploads the Google Play store listing (text, icon, feature
+# graphic, screenshots) from flutter_app/android/fastlane/metadata/android.
+# No build and no keystore; needs one internal build on Play first.
+# Skips with a notice until PLAY_SERVICE_ACCOUNT_JSON exists. See docs/RELEASING.md.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit with the listing to upload
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+# Queue rather than cancel: an upload in progress always finishes.
+concurrency:
+  group: play-listing
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    uses: ./.github/workflows/store-gate.yml
+    with:
+      store: Google Play listing
+      required: PLAY_SERVICE_ACCOUNT_JSON
+    secrets: inherit
+
+  listing:
+    name: Upload listing
+    needs: gate
+    if: needs.gate.outputs.configured == 'true'
+    runs-on: ${{ fromJSON(vars.ANDROID_RUNNER || '"ubuntu-latest"') }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || 'main' }}
+      - uses: ./.github/actions/setup-fastlane
+      - name: Upload listing
+        working-directory: flutter_app/android
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: bundle exec fastlane listing

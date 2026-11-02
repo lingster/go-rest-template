@@ -1,0 +1,37 @@
+name: Flutter checks
+
+# Reusable: analyze + test the Flutter app and the store tooling (release
+# helpers, store listing checker) at a given ref. The store workflows call it
+# first for the released tag. PR/push checks are in ci.yml.
+# Runner: ubuntu-latest, or the ANDROID_RUNNER repo variable (docs/STORES.md).
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check (defaults to the triggering ref)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Analyze, test
+    runs-on: ${{ fromJSON(vars.ANDROID_RUNNER || '"ubuntu-latest"') }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/setup-flutter
+      - name: Analyze
+        working-directory: flutter_app
+        run: flutter analyze
+      - name: Unit and widget tests
+        working-directory: flutter_app
+        run: flutter test
+      - name: Store tooling and listing checks
+        run: |
+          export PATH="/usr/local/opt/ruby/bin:$PATH"
+          for t in tool/fastlane/*_test.rb; do ruby "$t"; done

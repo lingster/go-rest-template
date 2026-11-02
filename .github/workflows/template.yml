@@ -9,6 +9,8 @@ on:
     paths:
       - "scripts/**"
       - "copier.yml"
+      - "tool/**"
+      - "flutter_app/**/fastlane/**"
       - ".github/workflows/template.yml"
 
 concurrency:
@@ -61,6 +63,9 @@ jobs:
           seo = open("webapp/src/lib/seo.ts").read()
           assert "export const MAIN_SITE_URL = 'https://www.acme.test/';" in seo
           PY
+      - name: Generated project passes the store listing checker and release tooling tests
+        working-directory: ${{ runner.temp }}/generated
+        run: for t in tool/fastlane/*_test.rb; do ruby "$t"; done
       - name: Generated backend passes vet, tests and swagger check
         working-directory: ${{ runner.temp }}/generated/backend
         run: |

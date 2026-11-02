@@ -1,0 +1,31 @@
+name: Set up fastlane
+description: Ruby and the Gemfile bundle (setup-ruby on GitHub-hosted runners, Homebrew Ruby on a self-hosted Mac, system Ruby on a self-hosted Linux box).
+runs:
+  using: composite
+  steps:
+    - if: runner.environment == 'github-hosted'
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.4'
+        bundler-cache: true
+    - if: runner.environment == 'self-hosted' && runner.os == 'macOS'
+      name: Bundle install (Homebrew Ruby)
+      shell: bash
+      run: |
+        echo "/usr/local/opt/ruby/bin" >> "$GITHUB_PATH"
+        export PATH="/usr/local/opt/ruby/bin:$PATH"
+        ruby --version
+        bundle config set --local path "$HOME/.cache/ci-bundle"
+        bundle install --jobs 4
+    - if: runner.environment == 'self-hosted' && runner.os == 'Linux'
+      name: Bundle install (system Ruby)
+      shell: bash
+      run: |
+        ruby --version
+        want="$(awk '/^BUNDLED WITH/{getline; gsub(/ /,""); print}' Gemfile.lock)"
+        export GEM_HOME="$HOME/.gem/ci" PATH="$HOME/.gem/ci/bin:$PATH"
+        echo "GEM_HOME=$GEM_HOME" >> "$GITHUB_ENV"
+        echo "$HOME/.gem/ci/bin" >> "$GITHUB_PATH"
+        gem list -i bundler -v "$want" >/dev/null || gem install --no-document bundler -v "$want"
+        bundle config set --local path "$HOME/.cache/ci-bundle"
+        bundle install --jobs 8

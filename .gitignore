@@ -6,3 +6,13 @@
 .env.*
 !.env.example
 .claude/worktrees/
+
+# fastlane / bundler
+/vendor/bundle/
+.bundle/
+**/fastlane/report.xml
+**/fastlane/README.md
+**/fastlane/test_output/
+
+__pycache__/
+*.pyc

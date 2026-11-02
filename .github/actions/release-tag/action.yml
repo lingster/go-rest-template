@@ -1,0 +1,44 @@
+name: Release tag
+description: >-
+  The release being built: the published release's tag, or the `tag` input of
+  a manual re-run. Fails unless it is semver (vX.Y.Z or vX.Y.Z-pre.N). Run it
+  after actions/checkout has checked out that tag.
+inputs:
+  tag:
+    description: Tag from workflow_dispatch (ignored for release events)
+    default: ''
+outputs:
+  tag:
+    description: e.g. v1.2.3
+    value: ${{ steps.tag.outputs.tag }}
+  version:
+    description: e.g. 1.2.3
+    value: ${{ steps.tag.outputs.version }}
+  prerelease:
+    description: "'true' for a GitHub pre-release or a vX.Y.Z-suffix tag"
+    value: ${{ steps.tag.outputs.prerelease }}
+runs:
+  using: composite
+  steps:
+    - id: tag
+      shell: bash
+      env:
+        EVENT_TAG: ${{ github.event.release.tag_name }}
+        EVENT_PRERELEASE: ${{ github.event.release.prerelease }}
+        INPUT_TAG: ${{ inputs.tag }}
+      run: |
+        tag="${EVENT_TAG:-$INPUT_TAG}"
+        re='^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+        if [[ ! "$tag" =~ $re ]]; then
+          echo "::error::Release tag '${tag}' is not semver; use vMAJOR.MINOR.PATCH (e.g. v1.2.3 or v1.2.3-rc.1)"
+          exit 1
+        fi
+        prerelease=false
+        if [[ "$EVENT_PRERELEASE" == "true" || -n "${BASH_REMATCH[2]}" ]]; then prerelease=true; fi
+        {
+          echo "tag=$tag"
+          echo "version=${BASH_REMATCH[1]}"
+          echo "prerelease=$prerelease"
+        } >> "$GITHUB_OUTPUT"
+        echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+        echo "Release $tag (version ${BASH_REMATCH[1]}, prerelease=$prerelease)" >> "$GITHUB_STEP_SUMMARY"

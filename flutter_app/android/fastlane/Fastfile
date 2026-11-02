@@ -1,0 +1,149 @@
+# Google Play releases. Run from flutter_app/android/:
+#   bundle exec fastlane internal                 # signed AAB -> internal track
+#   bundle exec fastlane release track:internal status:draft
+#   bundle exec fastlane listing                  # store listing text + graphics, no build
+# The store listing lives in fastlane/metadata/android/<language>/ (title, descriptions,
+# images/icon.png, images/featureGraphic.png, images/phoneScreenshots/). The release lane also
+# uploads that 512x512 icon to every existing listing language.
+# App-specific values (package, ...) come from tool/fastlane/app_config.rb only.
+# Env: PLAY_SERVICE_ACCOUNT_JSON, APP_KEYSTORE_* (read by app/build.gradle.kts),
+#      RELEASE_TAG (e.g. v1.2.3; empty -> version from pubspec.yaml),
+#      GITHUB_RUN_NUMBER (optional floor for the version code),
+#      PLAY_RELEASE_STATUS (optional: completed (default) or draft),
+#      API_BASE_URL, GOOGLE_*_CLIENT_ID (optional dart-defines, see AppConfig.dart_defines).
+require_relative "../../../tool/fastlane/app_config"
+require_relative "../../../tool/fastlane/build_info"
+
+# The Flutter app (pubspec.yaml, build/) lives in flutter_app/.
+ROOT = File.expand_path("../..", __dir__)
+PACKAGE = AppConfig::ANDROID_PACKAGE
+TRACKS = %w[internal alpha beta production].freeze
+METADATA_PATH = File.expand_path("metadata/android", __dir__)
+# The listing icon is the same for every language.
+LISTING_ICON = File.join(METADATA_PATH, "en-US/images/icon.png")
+
+default_platform(:android)
+
+platform :android do
+  desc "Build a signed App Bundle and upload it to the internal track"
+  lane :internal do
+    release(track: "internal")
+  end
+
+  desc "Upload the store listing (text, icon, feature graphic, screenshots); no build"
+  lane :listing do
+    json_key = play_json_key
+    # GOTCHA: supply (2.240.1) insists on a track release to hang the metadata upload on;
+    # without a version code it looks in "production" and fails. So the listing lane
+    # targets the newest INTERNAL version code, which means one build must exist first.
+    latest = google_play_track_version_codes(package_name: PACKAGE, json_key_data: json_key,
+                                             track: "internal").max
+    UI.user_error!("No internal build on Play yet; upload one before the listing") unless latest
+    # sync_image_upload compares sha256, so unchanged images are not re-uploaded.
+    # images/icon.png is uploaded here by supply itself (image type "icon").
+    upload_to_play_store(
+      package_name: PACKAGE,
+      json_key_data: json_key,
+      track: "internal",
+      version_code: latest,
+      metadata_path: METADATA_PATH,
+      sync_image_upload: true,
+      skip_upload_apk: true,
+      skip_upload_aab: true,
+      skip_upload_changelogs: true
+    )
+  end
+
+  desc "Build a signed App Bundle and upload it to a Play track"
+  lane :release do |options|
+    track = options.fetch(:track)
+    # GOTCHA: until the app's first release is rolled out in Play Console it is a "draft app"
+    # and Play only accepts status "draft" (docs/STORES.md). An unset repo variable reaches
+    # us as "", which fastlane rejects, hence the normalisation.
+    status = options[:status] || ENV["PLAY_RELEASE_STATUS"].to_s.strip
+    status = "completed" if status.empty?
+    pubspec = File.read(File.join(ROOT, "pubspec.yaml"))
+    json_key = play_json_key
+
+    name = BuildInfo.name(tag: ENV["RELEASE_TAG"], pubspec: pubspec)
+    number = BuildInfo.next_number(store_numbers: play_version_codes(json_key), pubspec: pubspec,
+                                   run_number: ENV["GITHUB_RUN_NUMBER"])
+    UI.message("Building #{name} (#{number}) for #{track} (#{status})")
+
+    Dir.chdir(ROOT) do
+      # Phones are arm/arm64; skipping x86_64 saves a third of the Dart AOT.
+      sh("flutter", "build", "appbundle", "--release",
+         "--target-platform", "android-arm,android-arm64",
+         "--build-name=#{name}", "--build-number=#{number}",
+         *AppConfig.dart_defines(name))
+    end
+
+    upload_to_play_store(
+      package_name: PACKAGE,
+      json_key_data: json_key,
+      track: track,
+      release_status: status,
+      aab: File.join(ROOT, "build/app/outputs/bundle/release/app-release.aab"),
+      skip_upload_metadata: true,
+      skip_upload_changelogs: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+
+    upload_listing_icon
+  end
+
+  def play_json_key
+    ENV.fetch("PLAY_SERVICE_ACCOUNT_JSON")
+  end
+
+  # Every versionCode on any track (empty tracks raise, so they count as none).
+  def play_version_codes(json_key)
+    TRACKS.flat_map do |track|
+      google_play_track_version_codes(package_name: PACKAGE, json_key_data: json_key, track: track)
+    rescue StandardError
+      []
+    end
+  end
+
+  # GOTCHA: Play's hi-res icon only comes from the listing, never from the AAB, so
+  # without this the store shows a generic icon. Best effort: the AAB is already
+  # uploaded, so a failure here warns instead of failing the release.
+  def upload_listing_icon
+    upload_icon_to_listings
+  rescue StandardError => e
+    warn_ci("Store listing icon not uploaded (release is unaffected): #{e.message}")
+  end
+
+  # One edit: set the icon on every existing listing language, then commit.
+  # Supply.config (json_key_data etc.) was populated by the preceding upload_to_play_store.
+  def upload_icon_to_listings
+    client = Supply::Client.make_from_config
+    client.begin_edit(package_name: PACKAGE)
+    begin
+      languages = client.listings.map(&:language)
+      if languages.empty?
+        client.abort_current_edit
+        return warn_ci("No store listings exist yet; skipping the listing icon")
+      end
+      languages.each do |language|
+        client.upload_image(image_path: LISTING_ICON, image_type: "icon", language: language)
+      end
+      client.commit_current_edit!
+      UI.success("Uploaded listing icon for: #{languages.join(", ")}")
+    rescue StandardError
+      begin
+        client.abort_current_edit
+      rescue StandardError
+        nil # the original error matters more than a failed cleanup
+      end
+      raise
+    end
+  end
+
+  # Fastlane warning plus a GitHub Actions annotation.
+  def warn_ci(message)
+    UI.important(message)
+    puts "::warning::#{message}"
+  end
+end

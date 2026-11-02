@@ -1,0 +1,20 @@
+name: Set up Android toolchain
+description: >-
+  JDK 17 for Gradle. GitHub-hosted runners get it from actions/setup-java (the
+  Android SDK is preinstalled on them); a self-hosted runner must already have
+  JAVA_HOME and ANDROID_HOME in its environment (see docs/STORES.md).
+runs:
+  using: composite
+  steps:
+    - if: runner.environment == 'github-hosted'
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - if: runner.environment == 'self-hosted'
+      name: Check JDK and Android SDK
+      shell: bash
+      run: |
+        for v in JAVA_HOME ANDROID_HOME; do
+          if [ -z "${!v:-}" ]; then echo "::error::$v is not set on this self-hosted runner (docs/STORES.md)"; exit 1; fi
+        done

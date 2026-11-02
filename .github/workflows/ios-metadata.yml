@@ -1,0 +1,58 @@
+name: iOS metadata (App Store listing)
+
+# Uploads the App Store listing (flutter_app/ios/fastlane/metadata and
+# screenshots) to the version the tag names. No build, no signing, no review
+# submission. The listing files come from `ref` (default main); the tag only
+# names the App Store version, as older tags may lack the metadata lane.
+# Skips with a notice until the App Store Connect secrets exist.
+# See docs/RELEASING.md ("Store listing").
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: App Store version to attach the listing to, e.g. v0.3.1
+        required: true
+        type: string
+      ref:
+        description: Branch or commit with the listing files
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-metadata
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    uses: ./.github/workflows/store-gate.yml
+    with:
+      store: App Store listing
+      required: ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8
+    secrets: inherit
+
+  metadata:
+    name: App Store metadata
+    needs: gate
+    if: needs.gate.outputs.configured == 'true'
+    runs-on: ${{ fromJSON(vars.IOS_RUNNER || '"macos-latest"') }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/release-tag
+        with:
+          tag: ${{ inputs.tag }}
+      - uses: ./.github/actions/setup-fastlane
+      - name: Upload metadata
+        working-directory: flutter_app/ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: bundle exec fastlane metadata

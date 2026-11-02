@@ -1,0 +1,84 @@
+name: iOS internal (TestFlight)
+
+# A published GitHub release (pre-releases too) -> signed IPA -> TestFlight,
+# where internal testers get it. Version = the tag (v1.2.3 -> 1.2.3); build
+# number = above everything in App Store Connect and >= GITHUB_RUN_NUMBER
+# (tool/fastlane/build_info.rb). See docs/RELEASING.md.
+# Skips with a notice until the App Store Connect secrets and the APPLE_TEAM_ID
+# variable exist (docs/STORES.md).
+# Runner: macos-latest, or the IOS_RUNNER repo variable, e.g.
+#   ["self-hosted","macOS","ios"]
+# The checks run on ANDROID_RUNNER / ubuntu-latest (flutter-checks.yml).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to (re)build, e.g. v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Queue rather than cancel: an upload in progress always finishes.
+concurrency:
+  group: ios-internal
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    uses: ./.github/workflows/store-gate.yml
+    with:
+      store: App Store Connect
+      required: ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8
+    secrets: inherit
+
+  checks:
+    needs: gate
+    if: needs.gate.outputs.configured == 'true'
+    uses: ./.github/workflows/flutter-checks.yml
+    with:
+      ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
+
+  testflight:
+    name: TestFlight
+    needs: [gate, checks]
+    if: needs.gate.outputs.configured == 'true'
+    runs-on: ${{ fromJSON(vars.IOS_RUNNER || '"macos-latest"') }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0   # recent commit subjects for the TestFlight notes
+      - uses: ./.github/actions/release-tag
+        with:
+          tag: ${{ inputs.tag }}
+      - name: Check Apple team id
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_TEAM_ID" ] && ! grep -q 'DEFAULT_APPLE_TEAM_ID = "[A-Z0-9]' tool/fastlane/app_config.rb; then
+            echo "::error::Set the APPLE_TEAM_ID repo variable (docs/STORES.md)"; exit 1
+          fi
+      - uses: ./.github/actions/setup-flutter
+      - uses: ./.github/actions/setup-fastlane
+      - name: Build and upload
+        working-directory: flutter_app/ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          # Self-hosted Mac only; a hosted runner uses a throwaway keychain.
+          CI_KEYCHAIN_PASSWORD: ${{ secrets.CI_KEYCHAIN_PASSWORD }}
+          CI_KEYCHAIN_PATH: ${{ vars.CI_KEYCHAIN_PATH }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_APP_ID: ${{ vars.APPLE_APP_ID }}
+          APPLE_TEAM_NAME: ${{ vars.APPLE_TEAM_NAME }}
+          # Store-build dart-defines (docs/STORES.md).
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          GOOGLE_SERVER_CLIENT_ID: ${{ vars.GOOGLE_SERVER_CLIENT_ID }}
+          GOOGLE_IOS_CLIENT_ID: ${{ vars.GOOGLE_IOS_CLIENT_ID }}
+        run: bundle exec fastlane internal
