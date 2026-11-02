@@ -1,0 +1,47 @@
+name: Store gate
+
+# Reusable: tells a store workflow whether its secrets are configured. A fresh
+# project from the template has none, so the store workflows skip with a notice
+# instead of failing. Call it with `secrets: inherit`.
+on:
+  workflow_call:
+    inputs:
+      store:
+        description: Name shown in the notice, e.g. "Google Play"
+        type: string
+        required: true
+      required:
+        description: Space-separated names of the secrets that must all be set
+        type: string
+        required: true
+    outputs:
+      configured:
+        description: "'true' when every required secret is set"
+        value: ${{ jobs.gate.outputs.configured }}
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Secrets configured?
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+          REQUIRED: ${{ inputs.required }}
+          STORE: ${{ inputs.store }}
+        run: |
+          missing=""
+          for name in $REQUIRED; do
+            value="$(jq -r --arg n "$name" '.[$n] // ""' <<<"$SECRETS_JSON")"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice::Skipping $STORE: secrets not configured:$missing (see docs/STORES.md)"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi

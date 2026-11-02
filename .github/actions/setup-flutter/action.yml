@@ -1,0 +1,45 @@
+name: Set up Flutter
+description: >-
+  Installs the Flutter SDK (cached via subosito/flutter-action) on GitHub-hosted
+  and self-hosted runners alike: the version pinned in flutter_app/.flutter-version
+  (stable channel when that file is absent), checked to be the one on PATH, then
+  `flutter pub get` in flutter_app/.
+inputs:
+  version:
+    description: Flutter version; defaults to the contents of flutter_app/.flutter-version
+    default: ''
+runs:
+  using: composite
+  steps:
+    - id: version
+      name: Resolve Flutter version
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        version="$INPUT_VERSION"
+        if [ -z "$version" ] && [ -f flutter_app/.flutter-version ]; then
+          version="$(tr -d '[:space:]' < flutter_app/.flutter-version)"
+        fi
+        echo "value=$version" >> "$GITHUB_OUTPUT"
+    - uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ steps.version.outputs.value }}
+        channel: stable
+        cache: true
+    - name: Get dependencies
+      shell: bash
+      working-directory: flutter_app
+      env:
+        WANT: ${{ steps.version.outputs.value }}
+      # The first flutter call in a fresh install prints setup output instead of
+      # the version, so warm it up first, then read the machine-readable version.
+      run: |
+        flutter --version >/dev/null 2>&1 || true
+        got="Flutter $(flutter --version --machine 2>/dev/null | sed -n 's/.*"frameworkVersion": *"\([^"]*\)".*/\1/p') "
+        echo "$got ($(command -v flutter))"
+        if [ -n "$WANT" ] && [[ "$got" != "Flutter $WANT "* ]]; then
+          echo "::error::expected Flutter $WANT on PATH, got: $got (an older self-hosted install shadowing it?)"
+          exit 1
+        fi
+        flutter pub get
