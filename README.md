@@ -13,6 +13,7 @@ A SaaS starter template: a Go/Beego REST API with complete authentication, a Flu
 - TOTP replay protection, rate limiting on auth endpoints, audit log, strict CSP
 - Admin API and admin UI
 - OpenAPI/Swagger docs at `/swagger/`
+- SEO landing page at `/` (plus `robots.txt` and `sitemap.xml`), driven by one JSON file
 - Flutter app (Android, iOS, web) with biometric unlock (Face ID / Touch ID / fingerprint)
 - SvelteKit webapp on Cloudflare Workers
 - GitHub Actions CI and tag-driven releases
@@ -62,10 +63,13 @@ cd my-app && git init && git add -A && git commit -m "chore: initialise project 
 ```
 
 Copier asks for the project name, slug, GitHub owner, Go module, Dart package, bundle id, worker name,
-author and email (sensible defaults are derived from the name, e.g. `6-Pack App` gives
+author, email, tagline and landing page URL (sensible defaults are derived from the name, e.g. `6-Pack App` gives
 `six_pack_app` and `com.<owner>.sixpackapp`). `--trust` is needed because the template runs
-`scripts/init_project.py` after copying. Add `--vcs-ref main` to use the latest `main` instead of the
-latest release tag.
+`scripts/init_project.py` after copying.
+
+> **Note:** Copier uses the latest **release tag** by default, so changes merged to `main` after the last
+> release are not included. Use `--vcs-ref main` for unreleased changes:
+> `uvx copier copy --trust --vcs-ref main gh:lingster/go-rest-template my-app`.
 
 ### Option B: GitHub "Use this template"
 
@@ -75,6 +79,7 @@ latest release tag.
    ```bash
    python3 scripts/init_project.py                       # interactive prompts
    python3 scripts/init_project.py --name "6-Pack App" --owner acme --yes   # or with flags
+   python3 scripts/init_project.py --tagline "Lift smarter" --site-url https://acme.example --yes
    ```
 
    `--dry-run` shows what would change. The script removes itself and `copier.yml` when done. Install
@@ -115,6 +120,57 @@ tokens itself (signature via Google's JWKS, issuer, audience, expiry, `email_ver
 Behaviour: accounts are matched by Google `sub`; otherwise by email (the Google identity is linked and the email marked verified);
 otherwise a new account is created without a password. Users with TOTP still complete the 2FA step. Google-created accounts
 set a password through "forgot password"; see [docs/SECURITY.md](docs/SECURITY.md).
+
+## Customise your landing page
+
+`GET /` serves a server-rendered, JavaScript-free marketing page, and the API also serves `/robots.txt` and
+`/sitemap.xml`. Everything on it comes from **`backend/conf/landing.json`** (embedded in the binary) and ships
+with obviously-placeholder copy, so replace it before launch. The generator fills the site name, tagline, URL
+and publisher from your answers (`tagline`, `site_url`); the rest is yours to edit.
+
+| Field | What it controls |
+| --- | --- |
+| `siteName`, `tagline`, `locale` | Brand name, one-line pitch, `lang` attribute and `og:locale` |
+| `url` | Canonical site URL (https, ends in `/`); used for the canonical link, sitemap, robots and social tags |
+| `title`, `description` | `<title>` and meta description. Title up to 60 characters, description up to 160 |
+| `lastModified` | `YYYY-MM-DD` shown as sitemap `lastmod`; bump it when the content changes |
+| `ogImage`, `icons` | Social share image (1200x630) and favicon / Apple touch icon paths under `/static/landing/img/` |
+| `theme` | Nine `#RRGGBB` colours (background, text, muted, primary, accent, hero, heroLabel, card, line) |
+| `fonts` | Optional bundled fonts (`family`, `faces`, `preload`); leave the families empty for the system font stack |
+| `brand.logo`, `hero` | Header logo; hero eyebrow, headline, sub-headline, note and optional picture (empty `src` hides it) |
+| `features`, `steps` | Section headings plus cards. `features.screenshots` is optional: an empty list hides the block |
+| `pricing` | Section text plus the `price` and `currency` that go into the structured data |
+| `faq` | Questions and answers, shown on the page and emitted as FAQ structured data |
+| `stores` | App Store / Google Play URLs and labels, and the "coming soon" text |
+| `app`, `publisher` | Structured-data app OS and category; publisher name, URL and contact email |
+| `footer`, `robots` | Footer links and disclaimer; paths to `Disallow` in `robots.txt` |
+
+**Images.** Replace the files in `backend/static/landing/img/` (keep the names, or update the paths in the JSON):
+`og.png` (1200x630), `icon.svg`, `favicon-32.png` (32x32) and `apple-touch-icon.png` (180x180). Keep them small
+(the placeholder og image is about 10 KB). To show screenshots, add files to the same folder and list them under
+`features.screenshots` (and `hero.image`) with `src`, `alt`, `width` and `height`. A one-off conversion from SVG
+works well: `uv run --with cairosvg python -c "import cairosvg; cairosvg.svg2png(url='og.svg', write_to='og.png', output_width=1200, output_height=630)"`.
+
+**Store links.** The App Store and Google Play buttons stay hidden (the "coming soon" text is shown) until you
+set the deploy-time switch `LANDING_STORE_LINKS_LIVE=true` on the API. Put your real store URLs in `stores` first.
+
+**Validation.** The server validates the file at startup and refuses to start with a list of every problem
+(missing fields, over-long title or description, bad colours or URLs, assets that do not exist). A Go test
+(`landing` package) loads the committed file, so `go test ./...` catches mistakes in CI.
+
+**Web app.** The webapp's SEO constants live in `webapp/src/lib/seo.ts` (`SITE_NAME`, `TAGLINE`, `WEB_ORIGIN`,
+`MAIN_SITE_URL`); the generator sets them, assuming the web app is served at `app.<your domain>`. Its home page
+canonicalises to the landing page, signed-in areas are `noindex` (meta tag and `_headers`), and
+`/sitemap.xml` and `static/robots.txt` are generated for the web app origin.
+
+**SEO checklist**
+
+- [ ] Title is 60 characters or fewer and description is 160 or fewer (enforced by validation)
+- [ ] `url` is your real production URL, with `https` and a trailing slash
+- [ ] The og image is 1200x630 and is your own artwork (test it in a social card preview tool)
+- [ ] Placeholder copy, pricing, FAQ and store URLs are replaced
+- [ ] Submit `https://<your-domain>/sitemap.xml` in Google Search Console
+- [ ] Run the page through Google's Rich Results Test (app and FAQ structured data)
 
 ## Before deploying
 
