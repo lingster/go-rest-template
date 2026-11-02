@@ -17,6 +17,7 @@ A SaaS starter template: a Go/Beego REST API with complete authentication, a Flu
 - Flutter app (Android, iOS, web) with biometric unlock (Face ID / Touch ID / fingerprint)
 - SvelteKit webapp on Cloudflare Workers
 - GitHub Actions CI and tag-driven releases
+- Store pipeline: fastlane builds to TestFlight and Play internal testing, app-icon generation, rendered store screenshots, and ASO listing placeholders with a length/keyword checker (skipped until store secrets are set)
 
 ## Architecture
 

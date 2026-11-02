@@ -95,6 +95,10 @@ class InitProjectTests(unittest.TestCase):
         self.assertIn("name: six_pack_app", (self.root / "flutter_app/pubspec.yaml").read_text())
         self.assertIn('"six-pack-app"', (self.root / "webapp/wrangler.jsonc").read_text())
         self.assertIn("Acme Ltd", (self.root / "LICENSE").read_text())
+        # The name under the app icon (and the in-app name) is the display name, not the package name.
+        self.assertIn("appName = '6-Pack App'", (self.root / "flutter_app/lib/core/config/app_config.dart").read_text())
+        self.assertIn("<string>6-Pack App</string>", (self.root / "flutter_app/ios/Runner/Info.plist").read_text())
+        self.assertIn('android:label="6-Pack App"', (self.root / "flutter_app/android/app/src/main/AndroidManifest.xml").read_text())
         activity = self.root / ip.KOTLIN_DIR / "com/acme/sixpackapp/MainActivity.kt"
         self.assertIn("package com.acme.sixpackapp", activity.read_text())
         self.assertFalse((self.root / ip.KOTLIN_DIR / "com/example").exists())

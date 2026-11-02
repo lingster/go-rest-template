@@ -27,5 +27,5 @@ abstract final class AppConfig {
   static String get apiRoot =>
       '${apiBaseUrl.replaceFirst(RegExp(r'/+$'), '')}$apiPrefix';
 
-  static const String appName = 'SaaS App';
+  static const String appName = 'SaaS Starter';
 }
