@@ -1,3 +1,5 @@
-# allow crawling everything by default
+# Signed-in areas are noindex; the sitemap lists the public pages.
 User-agent: *
-Disallow:
+Allow: /
+
+Sitemap: https://app.example.com/sitemap.xml

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import Seo from '#lib/components/Seo.svelte';
+	import { MAIN_SITE_URL, SITE_NAME, TAGLINE } from '#lib/seo.ts';
 
 	const features = [
 		{
@@ -11,16 +13,14 @@
 	];
 </script>
 
-<svelte:head>
-	<title>SaaS Starter</title>
-	<meta
-		name="description"
-		content="A production-ready SaaS starter: auth, 2FA, passkeys and admin."
-	/>
-</svelte:head>
+<Seo
+	title="{SITE_NAME} – {TAGLINE}"
+	description="Sign in to {SITE_NAME} to manage your account and security settings, including two-factor authentication and passkeys."
+	canonical={MAIN_SITE_URL}
+/>
 
 <header class="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-	<span class="text-lg font-semibold">SaaS Starter</span>
+	<span class="text-lg font-semibold">{SITE_NAME}</span>
 	<nav class="flex items-center gap-4 text-sm">
 		<a href={resolve('/(auth)/login')}>Sign in</a>
 		<a

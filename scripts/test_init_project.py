@@ -3,6 +3,7 @@
     python3 -m unittest discover -s scripts -v
 """
 
+import json
 import shutil
 import subprocess
 import sys
@@ -44,6 +45,28 @@ class NamingTests(unittest.TestCase):
 class GoogleHelperTests(unittest.TestCase):
     def test_reversed_client_id(self):
         self.assertEqual(ip.reversed_client_id("1234-abc.apps.googleusercontent.com"), "com.googleusercontent.apps.1234-abc")
+
+
+class LandingHelperTests(unittest.TestCase):
+    def test_origins(self):
+        self.assertEqual(ip.site_origin("https://www.acme.test/path"), "https://www.acme.test")
+        self.assertEqual(ip.webapp_origin("https://www.acme.test/"), "https://app.acme.test")
+        self.assertEqual(ip.webapp_origin("https://acme.test"), "https://app.acme.test")
+
+    def test_title_fits_search_results(self):
+        self.assertEqual(ip.landing_title("Acme", "Fast"), "Acme \u2013 Fast")
+        self.assertEqual(ip.landing_title("Acme", "x" * 80), "Acme")
+
+    def test_ts_string_quoting(self):
+        self.assertEqual(ip.ts_string("plain"), "'plain'")
+        self.assertEqual(ip.ts_string("it's"), '"it\'s"')
+
+    def test_validation_rejects_bad_landing_values(self):
+        s = ip.Settings("X", "x", "o", "github.com/o/x/backend", "x", "com.o.x", "x", "a", "a@b.co",
+                        tagline="two\nlines", site_url="http://insecure.test")
+        msgs = " ".join(s.validate())
+        self.assertIn("--tagline", msgs)
+        self.assertIn("--site-url", msgs)
 
 
 class InitProjectTests(unittest.TestCase):
@@ -112,6 +135,51 @@ class InitProjectTests(unittest.TestCase):
 
     def test_invalid_google_client_id_is_rejected(self):
         self.assertEqual(self.run_init("--google-web-client-id", "not-a-client-id"), 2)
+
+    # --- landing page ---
+    def landing(self):
+        return json.loads((self.root / "backend/conf/landing.json").read_text())
+
+    def test_landing_defaults_from_name(self):
+        self.assertEqual(self.run_init(), 0)
+        data = self.landing()
+        self.assertEqual(data["siteName"], "6-Pack App")
+        self.assertEqual(data["tagline"], ip.DEFAULT_TAGLINE)
+        self.assertEqual(data["url"], "https://example.com/")
+        self.assertEqual(data["publisher"]["name"], "Acme Ltd")
+        self.assertEqual(data["publisher"]["email"], "dev@acme.test")
+        self.assertRegex(data["lastModified"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertIn("com.acme.sixpackapp", data["stores"]["playStoreUrl"])
+
+    def test_landing_and_webapp_use_tagline_and_site_url(self):
+        self.assertEqual(self.run_init("--tagline", "Lift smarter, not harder", "--site-url", "https://www.acme.test/"), 0)
+        data = self.landing()
+        self.assertEqual(data["url"], "https://www.acme.test/")
+        self.assertEqual(data["title"], "6-Pack App \u2013 Lift smarter, not harder")
+        self.assertEqual(data["hero"]["headline"], "Lift smarter, not harder")
+        self.assertEqual(data["publisher"]["url"], "https://www.acme.test")
+        self.assertEqual(data["footer"]["links"][0]["href"], "https://app.acme.test")
+        seo = (self.root / "webapp/src/lib/seo.ts").read_text()
+        self.assertIn("export const SITE_NAME = '6-Pack App';", seo)
+        self.assertIn("export const TAGLINE = 'Lift smarter, not harder';", seo)
+        self.assertIn("export const WEB_ORIGIN = 'https://app.acme.test';", seo)
+        self.assertIn("export const MAIN_SITE_URL = 'https://www.acme.test/';", seo)
+        robots = (self.root / "webapp/static/robots.txt").read_text()
+        self.assertIn("Sitemap: https://app.acme.test/sitemap.xml", robots)
+
+    def test_tagline_with_apostrophe_is_a_valid_ts_string(self):
+        self.assertEqual(self.run_init(), 0)
+        self.assertIn('export const TAGLINE = "Your app\'s one-line pitch";', (self.root / "webapp/src/lib/seo.ts").read_text())
+
+    def test_invalid_site_url_is_rejected(self):
+        self.assertEqual(self.run_init("--site-url", "http://insecure.test"), 2)
+
+    @unittest.skipUnless(shutil.which("go"), "go not installed")
+    def test_backend_landing_tests_pass_after_rename(self):
+        self.assertEqual(self.run_init("--tagline", "Lift smarter", "--site-url", "https://acme.test"), 0)
+        result = subprocess.run(["go", "test", ".", "./landing"], cwd=self.root / "backend", capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    # --- /landing page ---
 
     @unittest.skipUnless(shutil.which("go"), "go not installed")
     def test_backend_still_builds(self):

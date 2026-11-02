@@ -29,7 +29,13 @@ func init() {
 	)
 	web.AddNamespace(ns)
 
-	web.Router("/healthz", &controllers.HealthController{}, "get:Get")
+	// Public landing page and crawler files.
+	web.Router("/", &controllers.LandingController{}, "get,head:Get")
+	web.Router("/robots.txt", &controllers.LandingController{}, "get,head:Robots")
+	web.Router("/sitemap.xml", &controllers.LandingController{}, "get,head:Sitemap")
+	web.Router("/static/landing/theme.css", &controllers.LandingController{}, "get,head:ThemeCSS")
+
+	web.Router("/healthz", &controllers.HealthController{}, "get,head:Get")
 
 	// Server-rendered admin UI (static assets are served by the app handler).
 	web.Router("/admin-ui", &controllers.AdminUIController{}, "get:Login")

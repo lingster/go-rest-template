@@ -54,6 +54,10 @@ type Config struct {
 	BcryptCost int
 	// TrustProxy makes the client IP come from X-Forwarded-For (only enable behind a trusted reverse proxy).
 	TrustProxy bool
+
+	// LandingStoreLinksLive shows the App Store / Google Play buttons on the landing page
+	// (LANDING_STORE_LINKS_LIVE); off until the apps are public, when "Coming soon" is shown instead.
+	LandingStoreLinksLive bool
 }
 
 // GoogleEnabled reports whether Google sign-in is configured.
@@ -90,6 +94,7 @@ func Load() (*Config, error) {
 		RateLimitPerMinute:       envInt("RATE_LIMIT_PER_MINUTE", 60),
 		BcryptCost:               envInt("BCRYPT_COST", 12),
 		TrustProxy:               envBool("TRUST_PROXY", false),
+		LandingStoreLinksLive:    envBool("LANDING_STORE_LINKS_LIVE", false),
 	}
 	return c, c.Validate()
 }

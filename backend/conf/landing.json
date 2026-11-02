@@ -1,0 +1,112 @@
+{
+  "_comment": "PLACEHOLDER CONTENT. Replace every value with your own copy; the server refuses to start if this file is invalid. See 'Customise your landing page' in the root README.",
+  "siteName": "SaaS Starter",
+  "url": "https://example.com/",
+  "locale": "en-US",
+  "title": "SaaS Starter – Your app's one-line pitch",
+  "description": "Placeholder: describe your product in one or two sentences (up to 160 characters). Search engines show this under your page title.",
+  "tagline": "Your app's one-line pitch",
+  "lastModified": "2026-11-02",
+  "ogImage": {
+    "src": "/static/landing/img/og.png",
+    "alt": "SaaS Starter: your app's one-line pitch",
+    "width": 1200,
+    "height": 630
+  },
+  "icons": {
+    "svg": "/static/landing/img/icon.svg",
+    "png32": "/static/landing/img/favicon-32.png",
+    "appleTouch": "/static/landing/img/apple-touch-icon.png"
+  },
+  "theme": {
+    "background": "#F8FAFC",
+    "text": "#0F172A",
+    "muted": "#475569",
+    "primary": "#4F46E5",
+    "accent": "#4338CA",
+    "hero": "#1E1B4B",
+    "heroLabel": "#A5B4FC",
+    "card": "#FFFFFF",
+    "line": "#E2E8F0"
+  },
+  "fonts": {
+    "heading": { "family": "", "faces": [] },
+    "body": { "family": "", "faces": [] }
+  },
+  "brand": {
+    "logo": { "src": "/static/landing/img/icon.svg", "alt": "", "width": 44, "height": 44 }
+  },
+  "hero": {
+    "eyebrow": "Placeholder eyebrow",
+    "headline": "Your app's one-line pitch",
+    "subhead": "Placeholder: say who it is for and the main benefit in a sentence or two. Sign-in, security and admin are already built, so you can focus on what makes your product unique.",
+    "note": "Placeholder content: edit backend/conf/landing.json to make this page yours.",
+    "image": { "src": "", "alt": "", "width": 0, "height": 0 }
+  },
+  "features": {
+    "eyebrow": "What you get",
+    "heading": "Everything you need to launch",
+    "intro": "Placeholder: these cards describe the starter's built-in features. Replace them with your product's.",
+    "items": [
+      { "title": "Accounts and sign-in", "text": "Email and password with email verification and password reset, plus optional sign in with Google." },
+      { "title": "Two-factor and passkeys", "text": "Protect accounts with authenticator-app codes and recovery codes, or sign in with a passkey." },
+      { "title": "Admin console", "text": "Manage users and roles, review sessions and read the audit log from a built-in admin area." },
+      { "title": "REST API with Swagger", "text": "A documented JSON API with rotating refresh tokens, so your own clients and integrations can build on it." },
+      { "title": "iOS and Android app", "text": "A Flutter app that shares the same account and API, ready to ship to both stores." },
+      { "title": "Web app", "text": "A fast web app on Cloudflare where people sign in and manage their account and security settings." }
+    ],
+    "screenshots": []
+  },
+  "steps": {
+    "eyebrow": "How it works",
+    "heading": "Three steps",
+    "items": [
+      { "title": "Create an account", "text": "Placeholder: sign up with email or Google in a few seconds." },
+      { "title": "Secure it", "text": "Placeholder: turn on two-factor authentication or add a passkey." },
+      { "title": "Get started", "text": "Placeholder: describe the first thing your users do with your product." }
+    ]
+  },
+  "pricing": {
+    "eyebrow": "Pricing",
+    "heading": "Simple pricing",
+    "text": "Placeholder: describe your plans here. Update the price and currency below so search engines show the right offer.",
+    "price": "0",
+    "currency": "USD"
+  },
+  "faq": {
+    "eyebrow": "Questions",
+    "heading": "FAQ",
+    "items": [
+      { "question": "What is SaaS Starter?", "answer": "Placeholder: explain in a sentence or two what your product does and who it is for." },
+      { "question": "Is it free?", "answer": "Placeholder: describe your free tier, trial or pricing." },
+      { "question": "Which devices does it run on?", "answer": "Placeholder: it works in the browser and as an app for iPhone and Android." },
+      { "question": "How do I contact support?", "answer": "Placeholder: use the email address in the footer of this page." }
+    ]
+  },
+  "stores": {
+    "heading": "Get SaaS Starter",
+    "appStoreUrl": "https://apps.apple.com/app/id0000000000",
+    "appStoreLabel": "Download on the App Store",
+    "playStoreUrl": "https://play.google.com/store/apps/details?id=com.example.saas_app",
+    "playStoreLabel": "Get it on Google Play",
+    "comingSoon": "Coming soon to the App Store and Google Play"
+  },
+  "app": {
+    "operatingSystem": "iOS, Android",
+    "category": "BusinessApplication"
+  },
+  "publisher": {
+    "name": "Ling LI",
+    "url": "https://example.com",
+    "email": "ling@aidraw.ai"
+  },
+  "footer": {
+    "links": [
+      { "label": "Web app", "href": "https://app.example.com" }
+    ],
+    "disclaimer": "Placeholder: add legal notices here, or remove this line."
+  },
+  "robots": {
+    "disallow": ["/api/", "/admin-ui", "/swagger", "/healthz"]
+  }
+}

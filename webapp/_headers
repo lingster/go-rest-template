@@ -1,0 +1,17 @@
+# Signed-in areas and auth forms are not for search engines (the pages also carry a robots meta).
+/dashboard/*
+  X-Robots-Tag: noindex, nofollow
+/settings/*
+  X-Robots-Tag: noindex, nofollow
+/admin/*
+  X-Robots-Tag: noindex, nofollow
+/login/*
+  X-Robots-Tag: noindex, nofollow
+/register
+  X-Robots-Tag: noindex, nofollow
+/forgot-password
+  X-Robots-Tag: noindex, nofollow
+/reset-password
+  X-Robots-Tag: noindex, nofollow
+/verify-email
+  X-Robots-Tag: noindex, nofollow

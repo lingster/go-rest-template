@@ -22,10 +22,10 @@ var (
 	date    = "unknown"
 )
 
-// assetsFS embeds the generated swagger spec, Swagger UI, admin UI templates and static files so the
+// assetsFS embeds the generated swagger spec, Swagger UI, admin UI templates, landing page content (conf/landing.json) and static files so the
 // binary is self-contained.
 //
-//go:embed swagger/swagger.json swagger/swagger.yml static views
+//go:embed swagger/swagger.json swagger/swagger.yml static views conf
 var assetsFS embed.FS
 
 func main() {

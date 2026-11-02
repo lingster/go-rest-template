@@ -10,7 +10,7 @@ static files are embedded with `//go:embed`.
 ## Layout
 
 ```
-main.go          entrypoint, version vars (ldflags), go:embed of swagger/ static/ views/
+main.go          entrypoint, version vars (ldflags), go:embed of swagger/ static/ views/ conf/
 app/             composition: DB, container, Beego config, middleware chain, embedded static serving
 config/          env config (+ prod safety check)
 models/          Beego ORM entities
@@ -19,6 +19,7 @@ services/        business logic: auth, token, mfa, passkey, admin, audit, user, 
 mail/            Mailer interface: console + smtp, text/HTML templates
 controllers/     thin Beego controllers (base controller has JSON/error helpers)
 filters/         net/http middleware (CORS, CSP/security headers, rate limit, logging, recover) + Beego auth filters
+landing/         typed landing page content (conf/landing.json): validation, JSON-LD, robots, sitemap, theme CSS
 routers/         router.go (swagger header + namespaces) and generated commentsRouter.go
 dto/             request/response structs + validation
 swagger/         generated swagger.json / swagger.yml (committed)
@@ -74,6 +75,7 @@ API on :8080, Postgres :5432, Mailpit UI <http://localhost:8025> (SMTP :1025). A
 | `RATE_LIMIT_PER_MINUTE` | `60` | per client IP across `/api/v1/auth/*`; `0` disables (extra, not in the contract) |
 | `BCRYPT_COST` | `12` | |
 | `TRUST_PROXY` | `false` | use `X-Forwarded-For` for the client IP; only behind a trusted proxy |
+| `LANDING_STORE_LINKS_LIVE` | `false` | env-only deploy switch: show the App Store / Google Play buttons on the landing page `/` (otherwise the "coming soon" text). All other landing content, theme and SEO data lives in `conf/landing.json` (validated at startup; see "Customise your landing page" in the root README) |
 
 ## Make targets
 

@@ -20,6 +20,7 @@ import (
 	"github.com/lingster/go-rest-template/backend/database"
 	"github.com/lingster/go-rest-template/backend/filters"
 	"github.com/lingster/go-rest-template/backend/httpx"
+	"github.com/lingster/go-rest-template/backend/landing"
 	"github.com/lingster/go-rest-template/backend/mail"
 	"github.com/lingster/go-rest-template/backend/repositories"
 	_ "github.com/lingster/go-rest-template/backend/routers" // registers routes
@@ -101,10 +102,12 @@ func buildHandler(cfg *config.Config, assets fs.FS) http.Handler {
 	if assets != nil {
 		mux.Handle("/swagger/", swaggerHandler(assets))
 		mux.Handle("/static/admin/", http.StripPrefix("/static/admin/", http.FileServerFS(mustSub(assets, "static/admin"))))
+		// theme.css is generated from conf/landing.json by the router; it must win over the file server below.
+		mux.Handle("/static/landing/theme.css", web.BeeApp.Handlers)
+		// Landing page assets (CSS, images, optional fonts): public and cacheable; "/" itself is a Beego route.
+		mux.Handle("/static/landing/", http.StripPrefix("/static/landing/",
+			withCacheControl(landingAssetCache, http.FileServerFS(mustSub(assets, "static/landing")))))
 	}
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/swagger/", http.StatusFound)
-	})
 	mux.Handle("/", web.BeeApp.Handlers)
 
 	var limiter filters.Limiter
@@ -119,6 +122,16 @@ func buildHandler(cfg *config.Config, assets fs.FS) http.Handler {
 		filters.RateLimit(limiter, "/api/v1/auth/", cfg.TrustProxy),
 		filters.ForceJSONBody("/api/"),
 	)
+}
+
+// landingAssetCache: file names are not fingerprinted, so keep the lifetime to a day.
+const landingAssetCache = "public, max-age=86400"
+
+func withCacheControl(value string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", value)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func mustSub(fsys fs.FS, dir string) fs.FS {
@@ -161,6 +174,11 @@ func configureBeego(assets fs.FS) error {
 	web.ErrorHandler("500", jsonErr(apperr.Internal()))
 
 	if assets != nil {
+		site, err := landing.LoadFS(assets, landing.DefaultPath)
+		if err != nil {
+			return err
+		}
+		landing.Set(site)
 		web.SetTemplateFSFunc(func() http.FileSystem { return http.FS(assets) })
 		if err := web.AddViewPath("views"); err != nil {
 			return fmt.Errorf("load templates: %w", err)
