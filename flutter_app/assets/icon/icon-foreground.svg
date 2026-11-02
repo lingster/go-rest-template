@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Adaptive-icon foreground (transparent, mark inside the central safe zone).
+     The background colour is adaptive_icon_background in flutter_launcher_icons.yaml. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <polygon points="512,282 711,397 512,512 313,397" fill="#FFFFFF"/>
+  <polygon points="313,397 512,512 512,742 313,627" fill="#FFFFFF" fill-opacity="0.78"/>
+  <polygon points="711,397 512,512 512,742 711,627" fill="#FFFFFF" fill-opacity="0.55"/>
+</svg>
