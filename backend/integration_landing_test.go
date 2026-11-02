@@ -185,3 +185,12 @@ func TestLandingAssetsAndAPIUnaffected(t *testing.T) {
 		t.Errorf("unknown path: %d", code)
 	}
 }
+
+// Link checkers (App Store precheck, crawlers) probe with HEAD.
+func TestLandingRoutesAnswerHead(t *testing.T) {
+	for _, path := range []string{"/", "/robots.txt", "/sitemap.xml", "/static/landing/theme.css"} {
+		if r := call(t, "HEAD", path, nil, ""); r.Status != 200 {
+			t.Errorf("HEAD %s: %d", path, r.Status)
+		}
+	}
+}
