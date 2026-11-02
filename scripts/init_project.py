@@ -85,7 +85,10 @@ VALIDATORS = {
     "google_web_client_id": (GOOGLE_CLIENT_ID_RE, "a Google OAuth client id ending in .apps.googleusercontent.com"),
     "google_ios_client_id": (GOOGLE_CLIENT_ID_RE, "a Google OAuth client id ending in .apps.googleusercontent.com"),
 }
-OPTIONAL = {"google_web_client_id", "google_ios_client_id"}
+# --- store release (apple_team_id) ---
+VALIDATORS["apple_team_id"] = (r"^[A-Z0-9]{10}$", "a 10-character Apple developer team id, e.g. ABCDE12345")
+# --- end store release ---
+OPTIONAL = {"google_web_client_id", "google_ios_client_id", "apple_team_id"}
 
 
 @dataclass
@@ -102,6 +105,8 @@ class Settings:
     # Optional "Sign in with Google" client IDs (public identifiers, not secrets). Empty = leave disabled.
     google_web_client_id: str = ""
     google_ios_client_id: str = ""
+    # Optional Apple developer team id for the iOS store build (also settable later via the APPLE_TEAM_ID repo variable).
+    apple_team_id: str = ""
 
     def validate(self) -> list[str]:
         errors = []
@@ -147,6 +152,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--google-web-client-id", default="",
                    help="Google web OAuth client id; enables Sign in with Google in the generated .env/config examples")
     p.add_argument("--google-ios-client-id", default="", help="Google iOS OAuth client id (optional)")
+    p.add_argument("--apple-team-id", default="",
+                   help="Apple developer team id (10 chars) baked into tool/fastlane/app_config.rb; optional, "
+                        "else set the APPLE_TEAM_ID repo variable")
     p.add_argument("-y", "--yes", action="store_true", help="no prompts: use flags and defaults")
     p.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
     p.add_argument("--skip-docs", action="store_true", help="don't regenerate swagger (make docs)")
@@ -178,6 +186,7 @@ def resolve(args: argparse.Namespace, ask) -> Settings:
         email=get("email", TEMPLATE_EMAIL),
         google_web_client_id=args.google_web_client_id.strip(),
         google_ios_client_id=args.google_ios_client_id.strip(),
+        apple_team_id=args.apple_team_id.strip(),
     )
 
 
@@ -272,6 +281,32 @@ def configure_google(root: Path, s: Settings, dry_run: bool) -> list[str]:
     return touched
 
 
+# --- store release ---------------------------------------------------------------
+APP_CONFIG = Path("tool/fastlane/app_config.rb")
+STORE_NAME_LIMIT = 30  # App Store / Play title limit (tool/fastlane/listing.rb)
+
+
+def configure_apple(root: Path, s: Settings, dry_run: bool) -> bool:
+    """Bake the optional Apple team id into the one app-config file of the release tooling."""
+    path = root / APP_CONFIG
+    if not s.apple_team_id or not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    new = re.sub(r'(DEFAULT_APPLE_TEAM_ID = )"[^"]*"', lambda m: f'{m.group(1)}"{s.apple_team_id}"', text)
+    if new != text and not dry_run:
+        path.write_text(new, encoding="utf-8")
+    return new != text
+
+
+def store_warnings(s: Settings) -> list[str]:
+    """Listing files use the app name as the store title, which both stores cap at 30 characters."""
+    if len(s.name) > STORE_NAME_LIMIT:
+        return [f"app name is {len(s.name)} characters; store titles allow {STORE_NAME_LIMIT}. "
+                "Shorten flutter_app/**/name.txt and title.txt (tool/fastlane/listing_test.rb checks it)."]
+    return []
+# --- end store release -----------------------------------------------------------
+
+
 def move_main_activity(root: Path, bundle_id: str, dry_run: bool) -> Path | None:
     kotlin = root / KOTLIN_DIR
     sources = list(kotlin.rglob("MainActivity.kt")) if kotlin.exists() else []
@@ -330,11 +365,16 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
 
     count = rewrite_files(root, settings.replacements(), args.dry_run)
     google_files = configure_google(root, settings, args.dry_run)
+    apple = configure_apple(root, settings, args.dry_run)
     activity = move_main_activity(root, settings.bundle_id, args.dry_run)
     verb = "Would update" if args.dry_run else "Updated"
     print(f"{verb} {count} files.")
     if google_files:
         print("Sign in with Google pre-configured in: " + ", ".join(google_files))
+    if apple:
+        print(f"Apple team id set in {APP_CONFIG}")
+    for warning in store_warnings(settings):
+        print(f"Warning: {warning}")
     if activity:
         print(f"MainActivity.kt -> {activity.relative_to(root)}")
     if args.dry_run:
@@ -350,7 +390,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
         "  1. Set JWT_SECRET, WEBAUTHN_RP_ID and WEBAUTHN_RP_ORIGINS for each environment.\n"
         "  2. Add CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID secrets and PUBLIC_API_URL / API_BASE_URL variables.\n"
         "  3. Optional: Sign in with Google (disabled until GOOGLE_CLIENT_IDS is set), see README.\n"
-        "  4. git add -A && git commit -m 'chore: initialise project from template'"
+        "  4. Store release (optional): edit the listing placeholders and see docs/STORES.md (README: ASO).\n"
+        "  5. git add -A && git commit -m 'chore: initialise project from template'"
     )
     return 0
 

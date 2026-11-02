@@ -11,7 +11,7 @@ class SigningTest < Minitest::Test
 
   def profile(team_name: "Acme Limited", team_id: "ABCDE12345", certs: [CERT])
     {
-      "Name" => "com.example.app AppStore",
+      "Name" => "com.acme.app AppStore",
       "UUID" => "1111-2222",
       "TeamName" => team_name,
       "TeamIdentifier" => [team_id],
@@ -25,7 +25,7 @@ class SigningTest < Minitest::Test
 
   def test_summary_reads_profile_fields
     s = Signing.summary(profile(certs: [CERT, OTHER]))
-    assert_equal "com.example.app AppStore", s.name
+    assert_equal "com.acme.app AppStore", s.name
     assert_equal "1111-2222", s.uuid
     assert_equal "Acme Limited", s.team_name
     assert_equal "ABCDE12345", s.team_id
@@ -60,11 +60,11 @@ class SigningTest < Minitest::Test
   end
 
   def test_export_options_pin_profile_uuid_and_cert_sha1
-    xml = Signing.export_options(team_id: "ABCDE12345", app_id: "com.example.app",
+    xml = Signing.export_options(team_id: "ABCDE12345", app_id: "com.acme.app",
                                  profile_uuid: "1111-2222", cert_sha1: CERT_SHA1)
     assert_includes xml, "<key>teamID</key><string>ABCDE12345</string>"
     assert_includes xml, "<key>signingCertificate</key><string>#{CERT_SHA1}</string>"
-    assert_includes xml, "<key>com.example.app</key><string>1111-2222</string>"
+    assert_includes xml, "<key>com.acme.app</key><string>1111-2222</string>"
     assert_includes xml, "<key>method</key><string>app-store-connect</string>"
   end
 

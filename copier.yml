@@ -93,6 +93,15 @@ google_ios_client_id:
   validator: >-
     {% if google_ios_client_id and not (google_ios_client_id | regex_search('^[0-9A-Za-z._-]+\\.apps\\.googleusercontent\\.com$')) %}Must end in .apps.googleusercontent.com{% endif %}
 
+# --- store release ---
+apple_team_id:
+  type: str
+  help: Apple developer team id for iOS store builds (10 characters, optional; leave empty and set the APPLE_TEAM_ID repo variable later)
+  default: ""
+  validator: >-
+    {% if apple_team_id and not (apple_team_id | regex_search('^[A-Z0-9]{10}$')) %}Must be 10 uppercase letters/digits, e.g. ABCDE12345{% endif %}
+# --- end store release ---
+
 _tasks:
   - command:
       - python3
@@ -120,3 +129,7 @@ _tasks:
       - "{{ google_web_client_id }}"
       - --google-ios-client-id
       - "{{ google_ios_client_id }}"
+      # --- store release ---
+      - --apple-team-id
+      - "{{ apple_team_id }}"
+      # --- end store release ---

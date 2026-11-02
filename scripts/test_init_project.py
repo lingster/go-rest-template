@@ -113,6 +113,39 @@ class InitProjectTests(unittest.TestCase):
     def test_invalid_google_client_id_is_rejected(self):
         self.assertEqual(self.run_init("--google-web-client-id", "not-a-client-id"), 2)
 
+    # --- store release ---
+    def test_store_files_are_renamed(self):
+        self.assertEqual(self.run_init(), 0)
+        read = lambda rel: (self.root / rel).read_text()  # noqa: E731
+        config = read("tool/fastlane/app_config.rb")
+        self.assertIn('ANDROID_PACKAGE = "com.acme.sixpackapp"', config)
+        self.assertIn('IOS_BUNDLE_ID = "com.acme.sixpackapp"', config)
+        self.assertIn('KEYCHAIN_NAME = "6-pack-app-ci"', config)
+        self.assertIn('DEFAULT_APPLE_TEAM_ID = ""', config)
+        for rel in ("flutter_app/android/fastlane/metadata/android/en-US/title.txt",
+                    "flutter_app/ios/fastlane/metadata/en-GB/name.txt",
+                    "flutter_app/ios/fastlane/metadata/en-US/name.txt"):
+            self.assertEqual(read(rel), "6-Pack App")
+        self.assertIn("6-Pack App", read("flutter_app/android/fastlane/metadata/android/en-US/short_description.txt"))
+        self.assertIn("package:six_pack_app/", read("flutter_app/test_store/support/store_harness.dart"))
+        self.assertIn("2026 Acme Ltd", read("flutter_app/ios/fastlane/metadata/copyright.txt"))
+        self.assertIn("APP_KEYSTORE_PATH", read("flutter_app/android/app/build.gradle.kts"))
+        self.assertIn("storeAppName = '6-Pack App'", read("flutter_app/test_store/store_shots.dart"))
+
+    def test_apple_team_id_is_baked_in_only_when_given(self):
+        self.assertEqual(self.run_init("--apple-team-id", "ABCDE12345"), 0)
+        self.assertIn('DEFAULT_APPLE_TEAM_ID = "ABCDE12345"', (self.root / ip.APP_CONFIG).read_text())
+
+    def test_invalid_apple_team_id_is_rejected(self):
+        self.assertEqual(self.run_init("--apple-team-id", "abc"), 2)
+
+    def test_long_app_name_warns(self):
+        s = ip.Settings("N" * 31, "n", "o", "github.com/o/n/backend", "n", "com.o.n", "n", "a", "a@b.co")
+        self.assertEqual(len(ip.store_warnings(s)), 1)
+        s.name = "Short"
+        self.assertEqual(ip.store_warnings(s), [])
+    # --- end store release ---
+
     @unittest.skipUnless(shutil.which("go"), "go not installed")
     def test_backend_still_builds(self):
         self.assertEqual(self.run_init(), 0)
