@@ -148,6 +148,66 @@ Configure under **Settings > Secrets and variables > Actions**:
    - `webapp-<tag>.zip`, and deploys the webapp to Cloudflare Workers
 3. Re-run manually via **Actions > Release > Run workflow** with an existing tag if needed.
 
+<!-- store:start -->
+## Ship to the stores
+
+The repo includes a store release pipeline (fastlane, GitHub Actions): a published release builds and
+uploads the app to TestFlight and the Google Play internal track, and manual workflows upload the store
+listing. It stays dormant, and skips with a notice, until you add the secrets. Start with
+[docs/STORES.md](docs/STORES.md) (accounts, keys, secrets, variables, runners), then
+[docs/RELEASING.md](docs/RELEASING.md) and the [submission checklist](docs/STORE_SUBMISSION.md).
+
+## Customise your store listing (ASO)
+
+Everything below is placeholder content derived from your project name: edit it before you publish.
+
+| What | Where |
+|---|---|
+| Play text (en-US) | `flutter_app/android/fastlane/metadata/android/en-US/` : `title.txt` (30 characters), `short_description.txt` (80), `full_description.txt` (4000) |
+| Play images | `.../en-US/images/`: `icon.png` (512x512), `featureGraphic.png` (1024x500, no alpha), `phoneScreenshots/` (2 to 8 files, 1080x1920, no alpha) |
+| App Store text (en-GB and en-US) | `flutter_app/ios/fastlane/metadata/<locale>/`: `name` (30), `subtitle` (30), `keywords` (100), `promotional_text` (170), `description` (4000), `release_notes`, and the `support`, `marketing` and `privacy` URLs (https) |
+| App Store shared | `flutter_app/ios/fastlane/metadata/copyright.txt` and `primary_category.txt` (a category id such as `PRODUCTIVITY`) |
+| App Store screenshots | `flutter_app/ios/fastlane/screenshots/<locale>/`: iPhone 1320x2868 and iPad 2064x2752, 1 to 10 each (the app targets both) |
+
+`ruby tool/fastlane/listing_test.rb` checks the limits, URLs, keyword rules and image sizes, and CI runs it
+(also on the project generated from this template).
+
+**Keyword tips.** Apple already indexes your name and subtitle, so do not repeat their words in
+`keywords.txt`; comma-separated, no spaces, singular (plurals are matched). The two locales deliberately use
+**different** keyword sets: the UK storefront indexes en-GB and the US one en-US, so splitting words between
+them doubles the terms you can rank for (the checker fails if they overlap). `keywords.txt` cannot hold
+comments, which is why this explanation lives here. Lead the name, subtitle and first lines of the description
+with what users search for, in plain words.
+
+**Screenshots and feature graphic** are rendered from the app's real screens (sign-in, home, profile, security)
+with fake providers by `flutter_app/test_store/`, which lives outside `test/` so a normal `flutter test` skips
+it. Captions, routes, app name, tagline and brand colours are one list in `test_store/store_shots.dart`;
+the fake user and data are in `test_store/support/fake_store_app.dart`. Regenerate from the repo root (needs
+Docker, or run `flutter test test_store` in `flutter_app/` with a local Flutter) and look at every PNG before committing:
+
+```sh
+docker run --rm -v "$PWD":/app -w /app/flutter_app ghcr.io/cirruslabs/flutter:stable bash -c \
+  "flutter pub get && flutter test test_store; chown -R $(id -u):$(id -g) /app"
+```
+
+**Swap the app icon.** Replace `flutter_app/assets/icon/icon.svg` (full-bleed square) and
+`icon-foreground.svg` (transparent, artwork inside the central 66%), render `icon-1024.png` (no alpha) and
+`icon-foreground.png` (1024x1024), then regenerate the platform icons and the 512px Play icon:
+
+```sh
+cd flutter_app
+rsvg-convert -w 1024 -h 1024 assets/icon/icon.svg | convert - -alpha off assets/icon/icon-1024.png
+rsvg-convert -w 1024 -h 1024 assets/icon/icon-foreground.svg -o assets/icon/icon-foreground.png
+convert assets/icon/icon-1024.png -resize 512x512 android/fastlane/metadata/android/en-US/images/icon.png
+dart run flutter_launcher_icons        # Android (adaptive), iOS and web icons, see flutter_launcher_icons.yaml
+```
+
+Then re-run the screenshot command (the feature graphic uses the foreground) and `git diff` the generated icons.
+
+**Upload** (details in [docs/RELEASING.md](docs/RELEASING.md#store-listing)): *Actions, Play listing* and
+*Actions, iOS metadata* (both manual). A release uploads builds only, not the listing.
+<!-- store:end -->
+
 ## Documentation
 
 - [backend/README.md](backend/README.md)
@@ -155,6 +215,7 @@ Configure under **Settings > Secrets and variables > Actions**:
 - [webapp/README.md](webapp/README.md)
 - [docs/API_CONTRACT.md](docs/API_CONTRACT.md)
 - [docs/SECURITY.md](docs/SECURITY.md)
+- [docs/STORES.md](docs/STORES.md), [docs/RELEASING.md](docs/RELEASING.md), [docs/STORE_SUBMISSION.md](docs/STORE_SUBMISSION.md)
 
 ## License
 
