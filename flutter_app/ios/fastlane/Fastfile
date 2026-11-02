@@ -1,0 +1,251 @@
+# App Store Connect releases, run from flutter_app/ios/ on a GitHub-hosted macOS runner
+# or a self-hosted Mac:
+#   bundle exec fastlane internal     # signed IPA -> TestFlight (internal group)
+#   bundle exec fastlane metadata     # App Store text + screenshots (no build)
+# App-specific values (bundle id, team, keychain) come from tool/fastlane/app_config.rb only.
+# Env: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (App Store Connect API key, Admin),
+#      APPLE_TEAM_ID (repo variable; or AppConfig::DEFAULT_APPLE_TEAM_ID),
+#      APPLE_APP_ID, APPLE_TEAM_NAME (optional repo variables),
+#      CI_KEYCHAIN_PASSWORD (self-hosted Mac; a hosted runner makes a throwaway keychain),
+#      CI_KEYCHAIN_PATH (optional: reuse another keychain, see AppConfig.keychain_path),
+#      RELEASE_TAG (e.g. v1.2.3; empty -> version from pubspec.yaml),
+#      GITHUB_RUN_NUMBER (optional floor for the build number),
+#      API_BASE_URL, GOOGLE_*_CLIENT_ID (optional dart-defines, see AppConfig.dart_defines).
+require "tmpdir"
+require "open3"
+require "plist"
+require_relative "../../../tool/fastlane/app_config"
+require_relative "../../../tool/fastlane/build_info"
+require_relative "../../../tool/fastlane/signing"
+
+# The Flutter app (pubspec.yaml, ios/, build/) lives in flutter_app/; the Ruby
+# helpers shared with Android are in tool/fastlane/ at the repo root.
+ROOT = File.expand_path("../..", __dir__)
+REPO_ROOT = File.expand_path("../../..", __dir__)
+APP_ID = AppConfig::IOS_BUNDLE_ID
+# GOTCHA: resolved at load time; inside a lane __dir__ is ".", relative to flutter_app/ios.
+METADATA_PATH = File.expand_path("metadata", __dir__)
+SCREENSHOTS_PATH = File.expand_path("screenshots", __dir__)
+# One keychain for signing. Self-hosted: it persists, and a new one means a new Apple
+# Distribution certificate on first run; if the team is at Apple's certificate limit,
+# point CI_KEYCHAIN_PATH at another app's keychain and use its password. Hosted: a
+# throwaway keychain in RUNNER_TEMP (also a new certificate per run, so revoke old ones).
+KEYCHAIN = AppConfig.keychain_path
+IPA_DIR = File.join(ROOT, "build/ios/ipa")
+
+# Where Xcode looks for installed profiles (the second is Xcode 16+).
+PROFILE_DIRS = [
+  File.expand_path("~/Library/MobileDevice/Provisioning Profiles"),
+  File.expand_path("~/Library/Developer/Xcode/UserData/Provisioning Profiles")
+].freeze
+# Intermediate that issues Apple Distribution certificates; without it the
+# identity is not "valid" and get_certificates cannot find what it created.
+WWDR_URL = "https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer"
+
+default_platform(:ios)
+
+platform :ios do
+  before_all do
+    app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_P8"),
+      # Apple's maximum (default 500 s); slow App Store Connect calls can
+      # otherwise outlive the token.
+      duration: 1200
+    )
+  end
+
+  desc "Build a signed IPA and upload it to TestFlight"
+  lane :internal do
+    # Internal testers get every processed build; no external testers,
+    # so no Beta App Review.
+    upload_to_testflight(
+      ipa: build_signed_ipa,
+      app_identifier: APP_ID,
+      **apple_id_option,
+      skip_waiting_for_build_processing: true,
+      distribute_external: false,
+      changelog: release_notes
+    )
+  end
+
+  desc "Upload the App Store listing (text and screenshots) to the version RELEASE_TAG names"
+  lane :metadata do |options|
+    version = options[:app_version] || BuildInfo.name(tag: ENV["RELEASE_TAG"],
+                                                      pubspec: File.read(File.join(ROOT, "pubspec.yaml")))
+    retried = false
+    begin
+      upload_listing(version)
+    rescue StandardError => e
+      # deliver 2.240.1 reads the version's App Review detail (for review attachments) and crashes
+      # with "No data" until one exists, i.e. before App Review Information is first filled in.
+      raise if retried || !e.message.include?("No data") || !create_review_detail(version)
+      retried = true
+      retry
+    end
+  end
+
+  # Creates an empty App Review detail on the editable version; true if one was created.
+  # Contact and demo-account details are then entered in App Store Connect.
+  def create_review_detail(version_string)
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    version = app&.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    return false unless version && version.version_string == version_string
+
+    begin
+      version.fetch_app_store_review_detail
+      false # it exists, so the failure was something else
+    rescue StandardError
+      UI.message("Creating an empty App Review detail for #{version_string}")
+      version.create_app_store_review_detail(attributes: {})
+      true
+    end
+  end
+
+  # No binary, no submission; the version is created/edited, never released.
+  def upload_listing(version)
+    upload_to_app_store(
+      app_identifier: APP_ID,
+      app_version: version,
+      metadata_path: METADATA_PATH,
+      screenshots_path: SCREENSHOTS_PATH,
+      skip_binary_upload: true,
+      overwrite_screenshots: true,
+      submit_for_review: false,
+      automatic_release: false,
+      force: true, # no HTML preview prompt
+      precheck_include_in_app_purchases: false # the API key cannot read IAPs
+    )
+  end
+
+  # The App Store Connect app id spares a lookup by bundle id; optional.
+  def apple_id_option
+    id = AppConfig.apple_app_id
+    id ? { apple_id: id } : {}
+  end
+
+  def release_notes
+    tag = ENV["RELEASE_TAG"].to_s
+    subjects = Dir.chdir(REPO_ROOT) { `git log -5 --pretty=%s`.lines.map(&:strip) }
+    ([tag.empty? ? "Local build" : "Release #{tag}"] + subjects.map { |s| "- #{s}" }).join("\n")
+  end
+
+  # Signs with the team's Apple Distribution certificate kept in the CI
+  # keychain (created on first run) and a matching App Store profile, then
+  # builds the IPA.
+  def build_signed_ipa
+    pubspec = File.read(File.join(ROOT, "pubspec.yaml"))
+    @build_name = BuildInfo.name(tag: ENV["RELEASE_TAG"], pubspec: pubspec)
+    latest = latest_testflight_build_number(app_identifier: APP_ID, initial_build_number: 0)
+    number = BuildInfo.next_number(store_numbers: [latest.to_i], pubspec: pubspec,
+                                   run_number: ENV["GITHUB_RUN_NUMBER"])
+    UI.message("Building #{@build_name} (#{number})")
+
+    password = AppConfig.keychain_password
+    unless File.exist?(KEYCHAIN)
+      create_keychain(path: KEYCHAIN, password: password, default_keychain: false, unlock: true,
+                      timeout: 0, lock_when_sleeps: false, add_to_search_list: true)
+    end
+    unlock_keychain(path: KEYCHAIN, password: password, add_to_search_list: true, set_default: false)
+    install_wwdr_certificate(password)
+    get_certificates(team_id: team_id, keychain_path: KEYCHAIN, keychain_password: password)
+    cert_sha1 = Signing.sha1(File.binread(lane_context[SharedValues::CERT_FILE_PATH]))
+    profile = team_profile(lane_context[SharedValues::CERT_CERTIFICATE_ID], cert_sha1)
+
+    # Pinned by SHA-1: "Apple Distribution" matches every
+    # distribution certificate, and Xcode may pick one the profile lacks.
+    update_code_signing_settings(
+      path: File.join(ROOT, "ios/Runner.xcodeproj"),
+      use_automatic_signing: false,
+      targets: ["Runner"],
+      build_configurations: ["Release"],
+      team_id: team_id,
+      code_sign_identity: cert_sha1,
+      profile_name: profile.name
+    )
+
+    plist = File.join(ROOT, "build/ios/ExportOptions.plist")
+    FileUtils.mkdir_p(File.dirname(plist))
+    File.write(plist, Signing.export_options(team_id: team_id, app_id: APP_ID,
+                                             profile_uuid: profile.uuid, cert_sha1: cert_sha1))
+    FileUtils.rm_rf(IPA_DIR)
+    write_google_xcconfig
+    Dir.chdir(ROOT) do
+      sh("flutter", "build", "ipa", "--release", "--build-name=#{@build_name}",
+         "--build-number=#{number}", "--export-options-plist=#{plist}",
+         *AppConfig.dart_defines(@build_name))
+    end
+    Dir[File.join(IPA_DIR, "*.ipa")].first or UI.user_error!("No IPA in #{IPA_DIR} (profile #{profile.uuid})")
+  end
+
+  # Sign in with Google: Info.plist reads the client IDs and the reversed-ID URL
+  # scheme from build settings, so write the git-ignored local xcconfig from the
+  # optional GOOGLE_IOS_CLIENT_ID / GOOGLE_SERVER_CLIENT_ID repo variables.
+  # Without an iOS client ID the committed placeholders stay (button inert).
+  def write_google_xcconfig
+    ios_id = ENV["GOOGLE_IOS_CLIENT_ID"].to_s.strip
+    path = File.join(ROOT, "ios/Flutter/Google.local.xcconfig")
+    FileUtils.rm_f(path)
+    return if ios_id.empty?
+
+    suffix = ".apps.googleusercontent.com"
+    UI.user_error!("GOOGLE_IOS_CLIENT_ID must end with #{suffix}") unless ios_id.end_with?(suffix)
+    File.write(path, <<~XCCONFIG)
+      GOOGLE_IOS_CLIENT_ID = #{ios_id}
+      GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.#{ios_id.delete_suffix(suffix)}
+      GOOGLE_SERVER_CLIENT_ID = #{ENV["GOOGLE_SERVER_CLIENT_ID"].to_s.strip}
+    XCCONFIG
+  end
+
+  def team_id
+    AppConfig.apple_team_id
+  end
+
+  def install_wwdr_certificate(password)
+    path = File.join(Dir.tmpdir, File.basename(WWDR_URL))
+    sh("curl", "-fsSL", "-o", path, WWDR_URL)
+    import_certificate(certificate_path: path, keychain_path: KEYCHAIN, keychain_password: password)
+  rescue StandardError => e
+    UI.message("WWDR certificate not imported (usually already present): #{e.message}")
+  end
+
+  # The App Store profile for the signing certificate, checked to be the
+  # team's and to contain that certificate; regenerated once if not. Older
+  # installed copies with the same name are removed so Xcode cannot pick one.
+  def team_profile(cert_id, cert_sha1)
+    get_provisioning_profile(app_identifier: APP_ID, team_id: team_id, cert_id: cert_id)
+    profile = read_profile(lane_context[SharedValues::SIGH_PROFILE_PATH])
+    unless signing_problems(profile, cert_sha1).empty?
+      UI.important("Regenerating the App Store profile: #{signing_problems(profile, cert_sha1).join('; ')}")
+      get_provisioning_profile(app_identifier: APP_ID, team_id: team_id, cert_id: cert_id, force: true)
+      profile = read_profile(lane_context[SharedValues::SIGH_PROFILE_PATH])
+      problems = signing_problems(profile, cert_sha1)
+      UI.user_error!("App Store profile unusable: #{problems.join('; ')}") unless problems.empty?
+    end
+    UI.success("Profile #{profile.name} (#{profile.uuid}), team #{profile.team_name} " \
+               "#{profile.team_id}, certificate #{cert_sha1}")
+    remove_stale_profiles(profile)
+    profile
+  end
+
+  def signing_problems(profile, cert_sha1)
+    Signing.problems(profile, team_id: team_id, team_name: AppConfig.apple_team_name, cert_sha1: cert_sha1)
+  end
+
+  # Decoded profile; stdout only, as `security cms` warns on stderr.
+  def read_profile(path)
+    xml, status = Open3.capture2("security", "cms", "-D", "-i", path)
+    UI.user_error!("Cannot decode profile #{path}") unless status.success?
+    Signing.summary(Plist.parse_xml(xml))
+  end
+
+  def remove_stale_profiles(keep)
+    installed = PROFILE_DIRS.flat_map { |d| Dir[File.join(d, "*.mobileprovision")] }
+                            .filter_map { |path| [path, read_profile(path)] rescue nil }.to_h
+    Signing.stale(installed, keep: keep).each do |path|
+      UI.message("Removing stale profile #{path}")
+      File.delete(path)
+    end
+  end
+end
