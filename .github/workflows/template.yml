@@ -40,6 +40,7 @@ jobs:
         run: >-
           uvx copier copy --trust --defaults --vcs-ref HEAD
           --data "project_name=6-Pack App" --data github_owner=acme
+          --data "tagline=Lift smarter, not harder" --data site_url=https://www.acme.test
           . "$RUNNER_TEMP/generated"
       - name: Generated project has no template names left
         working-directory: ${{ runner.temp }}/generated
@@ -48,6 +49,18 @@ jobs:
             echo "::error::template names left in generated project"; exit 1
           fi
           test ! -e scripts && test ! -e copier.yml && test ! -e .github/workflows/template.yml
+      - name: Landing page is filled from the answers
+        working-directory: ${{ runner.temp }}/generated
+        run: |
+          python3 - <<'PY'
+          import json
+          d = json.load(open("backend/conf/landing.json"))
+          assert d["siteName"] == "6-Pack App", d["siteName"]
+          assert d["url"] == "https://www.acme.test/", d["url"]
+          assert d["tagline"] == "Lift smarter, not harder", d["tagline"]
+          seo = open("webapp/src/lib/seo.ts").read()
+          assert "export const MAIN_SITE_URL = 'https://www.acme.test/';" in seo
+          PY
       - name: Generated backend passes vet, tests and swagger check
         working-directory: ${{ runner.temp }}/generated/backend
         run: |

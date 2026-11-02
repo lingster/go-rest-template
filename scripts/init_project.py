@@ -16,12 +16,15 @@ Run it once, from the repository root, right after creating your project:
 from __future__ import annotations
 
 import argparse
+import datetime
+import json
 import re
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -72,6 +75,9 @@ def default_worker(slug: str) -> str:
     return slugify(_lead_digit_to_word(slug))
 
 
+DEFAULT_TAGLINE = "Your app's one-line pitch"
+DEFAULT_SITE_URL = "https://example.com"
+
 GOOGLE_CLIENT_ID_RE = r"^[0-9A-Za-z._-]+\.apps\.googleusercontent\.com$"
 
 VALIDATORS = {
@@ -84,6 +90,8 @@ VALIDATORS = {
     "email": (r"^[^@\s]+@[^@\s]+\.[^@\s]+$", "an email address"),
     "google_web_client_id": (GOOGLE_CLIENT_ID_RE, "a Google OAuth client id ending in .apps.googleusercontent.com"),
     "google_ios_client_id": (GOOGLE_CLIENT_ID_RE, "a Google OAuth client id ending in .apps.googleusercontent.com"),
+    "tagline": (r"^[^\r\n]{1,100}$", "one line, up to 100 characters"),
+    "site_url": (r"^https://[^/\s?#]+(/[^\s?#]*)?$", "an https URL such as https://example.com"),
 }
 OPTIONAL = {"google_web_client_id", "google_ios_client_id"}
 
@@ -102,6 +110,9 @@ class Settings:
     # Optional "Sign in with Google" client IDs (public identifiers, not secrets). Empty = leave disabled.
     google_web_client_id: str = ""
     google_ios_client_id: str = ""
+    # Landing page (backend/conf/landing.json) and webapp SEO constants.
+    tagline: str = DEFAULT_TAGLINE
+    site_url: str = DEFAULT_SITE_URL
 
     def validate(self) -> list[str]:
         errors = []
@@ -147,6 +158,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--google-web-client-id", default="",
                    help="Google web OAuth client id; enables Sign in with Google in the generated .env/config examples")
     p.add_argument("--google-ios-client-id", default="", help="Google iOS OAuth client id (optional)")
+    p.add_argument("--tagline", help=f'one-line pitch for the landing page and web app (default: "{DEFAULT_TAGLINE}")')
+    p.add_argument("--site-url", help=f"public URL of the landing page, https (default: {DEFAULT_SITE_URL})")
     p.add_argument("-y", "--yes", action="store_true", help="no prompts: use flags and defaults")
     p.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
     p.add_argument("--skip-docs", action="store_true", help="don't regenerate swagger (make docs)")
@@ -178,6 +191,8 @@ def resolve(args: argparse.Namespace, ask) -> Settings:
         email=get("email", TEMPLATE_EMAIL),
         google_web_client_id=args.google_web_client_id.strip(),
         google_ios_client_id=args.google_ios_client_id.strip(),
+        tagline=get("tagline", DEFAULT_TAGLINE),
+        site_url=get("site_url", DEFAULT_SITE_URL),
     )
 
 
@@ -272,6 +287,92 @@ def configure_google(root: Path, s: Settings, dry_run: bool) -> list[str]:
     return touched
 
 
+# ---------------------------------------------------------------- landing page
+
+LANDING_JSON = Path("backend/conf/landing.json")
+WEBAPP_SEO = Path("webapp/src/lib/seo.ts")
+WEBAPP_ROBOTS = Path("webapp/static/robots.txt")
+LANDING_TITLE_MAX = 60  # keep in sync with backend/landing (search results truncate longer titles)
+
+
+def site_origin(site_url: str) -> str:
+    """'https://www.acme.test/path' -> 'https://www.acme.test'."""
+    parts = urlsplit(site_url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def webapp_origin(site_url: str) -> str:
+    """Conventional home of the web app: app.<landing host>, e.g. https://app.acme.test."""
+    host = urlsplit(site_url).netloc
+    return f"https://app.{host.removeprefix('www.')}"
+
+
+def landing_title(name: str, tagline: str) -> str:
+    title = f"{name} \u2013 {tagline}"
+    return title if len(title) <= LANDING_TITLE_MAX else name
+
+
+def apply_landing(data: dict, s: Settings, today: str) -> dict:
+    """Return landing.json content filled from the settings (pure; edits the parsed JSON, not text)."""
+    origin = site_origin(s.site_url)
+    data["siteName"] = s.name
+    data["url"] = origin + "/"
+    data["title"] = landing_title(s.name, s.tagline)
+    data["tagline"] = s.tagline
+    data["lastModified"] = today
+    data["ogImage"]["alt"] = f"{s.name}: {s.tagline}"
+    data["hero"]["headline"] = s.tagline
+    data["stores"]["heading"] = f"Get {s.name}"
+    data["faq"]["items"][0]["question"] = f"What is {s.name}?"
+    data["publisher"].update(name=s.author, email=s.email, url=origin)
+    for link in data["footer"]["links"]:
+        if link["label"] == "Web app":
+            link["href"] = webapp_origin(s.site_url)
+    return data
+
+
+def ts_string(value: str) -> str:
+    """A TypeScript string literal in the repo's prettier style (single quotes unless the text has one)."""
+    escaped = value.replace("\\", "\\\\")
+    return json.dumps(value, ensure_ascii=False) if "'" in value else "'" + escaped + "'"
+
+
+def _set_ts_const(text: str, name: str, value: str) -> str:
+    return re.sub(rf"^(export const {re.escape(name)} = )(?:'[^'\n]*'|\"[^\"\n]*\")", lambda m: m.group(1) + ts_string(value), text, flags=re.M)
+
+
+def configure_landing(root: Path, s: Settings, dry_run: bool, today: str | None = None) -> list[str]:
+    """Fill the landing page content and the webapp SEO constants from name, tagline and site URL."""
+    today = today or datetime.date.today().isoformat()
+    web = webapp_origin(s.site_url)
+
+    def landing(t: str) -> str:
+        return json.dumps(apply_landing(json.loads(t), s, today), indent=2, ensure_ascii=False) + "\n"
+
+    def seo(t: str) -> str:
+        for const, value in (("SITE_NAME", s.name), ("TAGLINE", s.tagline), ("WEB_ORIGIN", web), ("MAIN_SITE_URL", site_origin(s.site_url) + "/")):
+            t = _set_ts_const(t, const, value)
+        return t
+
+    edits = {
+        LANDING_JSON: landing,
+        WEBAPP_SEO: seo,
+        WEBAPP_ROBOTS: lambda t: re.sub(r"^Sitemap: .*$", f"Sitemap: {web}/sitemap.xml", t, flags=re.M),
+    }
+    touched = []
+    for rel, fn in edits.items():
+        path = root / rel
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        new = fn(text)
+        if new != text:
+            touched.append(str(rel))
+            if not dry_run:
+                path.write_text(new, encoding="utf-8")
+    return touched
+
+
 def move_main_activity(root: Path, bundle_id: str, dry_run: bool) -> Path | None:
     kotlin = root / KOTLIN_DIR
     sources = list(kotlin.rglob("MainActivity.kt")) if kotlin.exists() else []
@@ -330,11 +431,14 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
 
     count = rewrite_files(root, settings.replacements(), args.dry_run)
     google_files = configure_google(root, settings, args.dry_run)
+    landing_files = configure_landing(root, settings, args.dry_run)
     activity = move_main_activity(root, settings.bundle_id, args.dry_run)
     verb = "Would update" if args.dry_run else "Updated"
     print(f"{verb} {count} files.")
     if google_files:
         print("Sign in with Google pre-configured in: " + ", ".join(google_files))
+    if landing_files:
+        print("Landing page and SEO configured in: " + ", ".join(landing_files))
     if activity:
         print(f"MainActivity.kt -> {activity.relative_to(root)}")
     if args.dry_run:
@@ -350,7 +454,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
         "  1. Set JWT_SECRET, WEBAUTHN_RP_ID and WEBAUTHN_RP_ORIGINS for each environment.\n"
         "  2. Add CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID secrets and PUBLIC_API_URL / API_BASE_URL variables.\n"
         "  3. Optional: Sign in with Google (disabled until GOOGLE_CLIENT_IDS is set), see README.\n"
-        "  4. git add -A && git commit -m 'chore: initialise project from template'"
+        "  4. Replace the placeholder copy and images in backend/conf/landing.json (see README: Customise your landing page).\n"
+        "  5. git add -A && git commit -m 'chore: initialise project from template'"
     )
     return 0
 

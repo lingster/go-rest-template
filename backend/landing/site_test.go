@@ -38,7 +38,7 @@ func TestGeneratedOutputs(t *testing.T) {
 		t.Errorf("sitemap: %s", s.SitemapXML())
 	}
 	css := s.ThemeCSS()
-	for _, want := range []string{"--primary:#4F46E5", "--font-heading:system-ui"} {
+	for _, want := range []string{"--primary:" + s.Theme.Primary, "--font-heading:", "--font-body:"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("theme css missing %q", want)
 		}

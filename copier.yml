@@ -93,6 +93,22 @@ google_ios_client_id:
   validator: >-
     {% if google_ios_client_id and not (google_ios_client_id | regex_search('^[0-9A-Za-z._-]+\\.apps\\.googleusercontent\\.com$')) %}Must end in .apps.googleusercontent.com{% endif %}
 
+# --- landing page (backend/conf/landing.json) and webapp SEO ---
+tagline:
+  type: str
+  help: One-line pitch shown on the landing page and in search results
+  default: "Your app's one-line pitch"
+  validator: >-
+    {% if not (tagline | regex_search('^[^\\r\\n]{1,100}$')) %}One line, up to 100 characters{% endif %}
+
+site_url:
+  type: str
+  help: Public https URL of the landing page (served by the API at /), e.g. https://example.com
+  default: https://example.com
+  validator: >-
+    {% if not (site_url | regex_search('^https://[^/\\s?#]+(/[^\\s?#]*)?$')) %}Use an https URL such as https://example.com{% endif %}
+# --- /landing page ---
+
 _tasks:
   - command:
       - python3
@@ -120,3 +136,8 @@ _tasks:
       - "{{ google_web_client_id }}"
       - --google-ios-client-id
       - "{{ google_ios_client_id }}"
+      # landing page
+      - --tagline
+      - "{{ tagline }}"
+      - --site-url
+      - "{{ site_url }}"
