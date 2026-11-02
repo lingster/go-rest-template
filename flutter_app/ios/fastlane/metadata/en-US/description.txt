@@ -1,0 +1,21 @@
+PLACEHOLDER LISTING: replace this text with your own before you submit (see "Customise your store listing" in the README).
+
+SaaS Starter: write one or two sentences here that say who the app is for and what it helps them do. Lead with the benefit; people decide from the first lines.
+
+WHAT YOU GET
+
+Sign in your way
+- Create an account with email and password, or continue with Google.
+- Use a passkey instead of a password.
+- Reset your password from the app.
+
+Keep your account safe
+- Turn on two-factor authentication with an authenticator app and keep your recovery codes.
+- Unlock the app with Face ID.
+- Manage your security settings in one place.
+
+Your profile
+- See and update your account details.
+- Sign out at any time.
+
+Replace each block with the real features of your app: short lines, one benefit each. Finish with your support email and website.
