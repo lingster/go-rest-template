@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -156,7 +157,8 @@ func TestLoginThrottleDoesNotAffectPasskeyOrGoogleSignIn(t *testing.T) {
 	}
 	expect(t, login(t, ip, email, password), 429, "rate_limited")
 
-	tok, _ := googleToken(email, "Owner")
+	// The address's domain is Workspace-hosted, so Google is authoritative and may link the account.
+	tok, _ := googleTokenHD(email, "Owner", email[strings.LastIndex(email, "@")+1:])
 	r := callFrom(t, ip, "POST", "/api/v1/auth/google", map[string]string{"id_token": tok}, "")
 	expect(t, r, 200, "")
 	// Passkey ceremonies start normally too (finishing one needs a real authenticator).
