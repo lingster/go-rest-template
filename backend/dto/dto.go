@@ -52,10 +52,10 @@ type Message struct {
 	Message string `json:"message"`
 }
 
-// RegisterResponse is returned by /auth/register.
+// RegisterResponse is returned by /auth/register. It is identical whether or not the address was
+// already registered, so it carries no account data.
 type RegisterResponse struct {
-	User    User   `json:"user"`
-	Message string `json:"message"`
+	Message string `json:"message" example:"Check your email to finish setting up your account."`
 }
 
 // Passkey describes a registered WebAuthn credential.

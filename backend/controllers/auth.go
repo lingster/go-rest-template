@@ -11,10 +11,9 @@ type AuthController struct{ BaseController }
 
 // Register creates an account
 // @Title Register
-// @Description Create a new account. Sends a verification email.
+// @Description Create a new account and send a verification email. The response is the same whether or not the address is already registered (an existing owner is emailed instead), so it cannot be used to enumerate accounts.
 // @Param	body	body	dto.RegisterRequest	true	"Account details"
-// @Success 201 {object} dto.RegisterResponse
-// @Failure 409 conflict: email already registered
+// @Success 202 {object} dto.RegisterResponse
 // @Failure 422 validation_error
 // @Failure 429 rate_limited
 // @router /register [post]
@@ -28,7 +27,7 @@ func (c *AuthController) Register() {
 		c.Fail(err)
 		return
 	}
-	c.Reply(http.StatusCreated, res)
+	c.Reply(http.StatusAccepted, res)
 }
 
 // Login authenticates with email and password
@@ -60,12 +59,13 @@ func (c *AuthController) Providers() {
 
 // LoginGoogle signs in with a Google ID token
 // @Title LoginGoogle
-// @Description Verifies a Google ID token server-side. Creates the account, or links it to an existing account with the same Google-verified email. Returns an AuthResponse, or an MfaChallenge (mfa_required=true) when TOTP is enabled: Google never bypasses 2FA. Disabled (404 google_signin_disabled) unless GOOGLE_CLIENT_IDS is set.
+// @Description Verifies a Google ID token server-side. Creates the account, or links it to an existing account with the same email only when Google is authoritative for that address (gmail.com/googlemail.com, or the token's hosted domain claim equals the email domain); otherwise 409 account_exists_sign_in_required. Returns an AuthResponse, or an MfaChallenge (mfa_required=true) when TOTP is enabled: Google never bypasses 2FA. Disabled (404 google_signin_disabled) unless GOOGLE_CLIENT_IDS is set.
 // @Param	body	body	dto.GoogleLoginRequest	true	"Google ID token"
 // @Success 200 {object} dto.AuthResponse
 // @Failure 401 invalid_token
 // @Failure 403 account_disabled
 // @Failure 404 google_signin_disabled
+// @Failure 409 account_exists_sign_in_required
 // @Failure 429 rate_limited
 // @router /google [post]
 func (c *AuthController) LoginGoogle() {
@@ -200,8 +200,8 @@ func (c *AuthController) ResetPassword() {
 
 // PasskeyLoginBegin starts a passkey login ceremony
 // @Title PasskeyLoginBegin
-// @Description Omit email to use discoverable credentials.
-// @Param	body	body	dto.PasskeyLoginBeginRequest	false	"Optional email"
+// @Description Always a discoverable-credential ceremony with user verification required. The optional email is accepted for compatibility and ignored, so the response never depends on whether an account exists.
+// @Param	body	body	dto.PasskeyLoginBeginRequest	false	"Optional email (ignored)"
 // @Success 200 {object} dto.CeremonyResponse
 // @router /passkey/login/begin [post]
 func (c *AuthController) PasskeyLoginBegin() {
@@ -209,7 +209,7 @@ func (c *AuthController) PasskeyLoginBegin() {
 	if !c.DecodeOptional(&req) {
 		return
 	}
-	sid, opts, err := c.C.Passkeys.BeginLogin(dto.NormalizeEmail(req.Email))
+	sid, opts, err := c.C.Passkeys.BeginLogin()
 	if err != nil {
 		c.Fail(err)
 		return

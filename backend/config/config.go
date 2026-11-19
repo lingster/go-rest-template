@@ -13,6 +13,12 @@ import (
 // DefaultJWTSecret is the insecure development secret; prod refuses to start with it.
 const DefaultJWTSecret = "dev-insecure-change-me-please-0123456789"
 
+// DefaultAdminPassword is the placeholder from .env.example / docker-compose; prod refuses to seed it.
+const DefaultAdminPassword = "change-me-please"
+
+// MinProdAdminPasswordLen is the minimum seeded admin password length in prod.
+const MinProdAdminPasswordLen = 12
+
 // Config holds all runtime configuration.
 type Config struct {
 	AppEnv   string
@@ -24,6 +30,9 @@ type Config struct {
 	JWTSecret       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+	// ReauthMaxAge is how recent the last sign-in must be to add a passkey or set up TOTP
+	// (a refreshed session keeps its original sign-in time).
+	ReauthMaxAge time.Duration
 
 	RequireEmailVerification bool
 
@@ -37,6 +46,9 @@ type Config struct {
 	SMTPUsername string
 	SMTPPassword string
 	MailFrom     string
+	// SMTPRequireTLS refuses to send mail over a connection that could not be upgraded with STARTTLS
+	// (SMTP_REQUIRE_TLS, default true when APP_ENV=prod).
+	SMTPRequireTLS bool
 
 	FrontendURL        string
 	CORSAllowedOrigins []string
@@ -54,6 +66,9 @@ type Config struct {
 	BcryptCost int
 	// TrustProxy makes the client IP come from X-Forwarded-For (only enable behind a trusted reverse proxy).
 	TrustProxy bool
+
+	// SwaggerEnabled serves the API spec and Swagger UI at /swagger/ (SWAGGER_ENABLED, default off in prod).
+	SwaggerEnabled bool
 
 	// LandingStoreLinksLive shows the App Store / Google Play buttons on the landing page
 	// (LANDING_STORE_LINKS_LIVE); off until the apps are public, when "Coming soon" is shown instead.
@@ -76,6 +91,7 @@ func Load() (*Config, error) {
 		JWTSecret:                env("JWT_SECRET", DefaultJWTSecret),
 		AccessTokenTTL:           envDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:          envDuration("REFRESH_TOKEN_TTL", 720*time.Hour),
+		ReauthMaxAge:             envDuration("REAUTH_MAX_AGE", 10*time.Minute),
 		RequireEmailVerification: envBool("REQUIRE_EMAIL_VERIFICATION", true),
 		GoogleClientIDs:          envList("GOOGLE_CLIENT_IDS", nil),
 		MailDriver:               env("MAIL_DRIVER", "console"),
@@ -96,6 +112,8 @@ func Load() (*Config, error) {
 		TrustProxy:               envBool("TRUST_PROXY", false),
 		LandingStoreLinksLive:    envBool("LANDING_STORE_LINKS_LIVE", false),
 	}
+	c.SMTPRequireTLS = envBool("SMTP_REQUIRE_TLS", c.IsProd())
+	c.SwaggerEnabled = envBool("SWAGGER_ENABLED", !c.IsProd())
 	return c, c.Validate()
 }
 
@@ -113,7 +131,43 @@ func (c *Config) Validate() error {
 	if c.IsProd() && len(c.JWTSecret) < 32 {
 		return errors.New("JWT_SECRET must be at least 32 characters in prod")
 	}
+	if c.IsProd() && c.AdminPassword != "" &&
+		(c.AdminPassword == DefaultAdminPassword || len(c.AdminPassword) < MinProdAdminPasswordLen) {
+		return fmt.Errorf("ADMIN_PASSWORD must not be the example value and must be at least %d characters in prod",
+			MinProdAdminPasswordLen)
+	}
 	return nil
+}
+
+// Warnings lists risky but legal settings, logged at startup.
+func (c *Config) Warnings() []string {
+	var w []string
+	if !c.IsProd() {
+		return w
+	}
+	if c.MailDriver == "console" {
+		w = append(w, "MAIL_DRIVER=console in prod writes password-reset and verification links to the logs")
+	}
+	if !c.SMTPRequireTLS && c.MailDriver == "smtp" {
+		w = append(w, "SMTP_REQUIRE_TLS=false in prod: reset links may be sent unencrypted")
+	}
+	for _, o := range c.CORSAllowedOrigins {
+		if o == "*" {
+			w = append(w, "CORS_ALLOWED_ORIGINS contains * in prod")
+		}
+	}
+	for _, o := range c.WebAuthnRPOrigins {
+		if strings.HasPrefix(o, "http://") {
+			w = append(w, "WEBAUTHN_RP_ORIGINS contains a non-HTTPS origin in prod: "+o)
+		}
+	}
+	if c.SwaggerEnabled {
+		w = append(w, "SWAGGER_ENABLED=true in prod publishes the API surface at /swagger/")
+	}
+	if c.AdminPassword != "" {
+		w = append(w, "ADMIN_PASSWORD is set: remove it from the environment once the admin exists")
+	}
+	return w
 }
 
 func env(key, def string) string {

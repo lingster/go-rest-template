@@ -52,11 +52,12 @@ func (f *FakeGoogleVerifier) Verify(_ context.Context, token string) (*services.
 func Config() *config.Config {
 	return &config.Config{
 		AppEnv: "test", HTTPPort: 0, DBDriver: "sqlite", JWTSecret: "test-secret-test-secret-test-secret-0123",
-		AccessTokenTTL: 15 * time.Minute, RefreshTokenTTL: 720 * time.Hour, RequireEmailVerification: true,
-		MailDriver: "console", FrontendURL: "http://localhost:5173",
+		AccessTokenTTL: 15 * time.Minute, RefreshTokenTTL: 720 * time.Hour, ReauthMaxAge: 10 * time.Minute,
+		RequireEmailVerification: true,
+		MailDriver:               "console", FrontendURL: "http://localhost:5173",
 		CORSAllowedOrigins: []string{"http://localhost:5173"},
 		WebAuthnRPID:       "localhost", WebAuthnRPName: "Test", WebAuthnRPOrigins: []string{"http://localhost:5173"},
-		RateLimitPerMinute: 100000, BcryptCost: 4,
+		RateLimitPerMinute: 100000, BcryptCost: 4, SwaggerEnabled: true,
 	}
 }
 
@@ -160,6 +161,18 @@ func (m *MemMailer) LastSubject(to string) string {
 		}
 	}
 	return ""
+}
+
+// LastTo returns the most recent message sent to the address (zero value if none).
+func (m *MemMailer) LastTo(to string) mail.Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := len(m.Sent) - 1; i >= 0; i-- {
+		if m.Sent[i].To == to {
+			return m.Sent[i]
+		}
+	}
+	return mail.Message{}
 }
 
 // Count returns the number of messages sent to the address.

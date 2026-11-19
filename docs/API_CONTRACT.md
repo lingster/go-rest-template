@@ -14,7 +14,18 @@ All three projects MUST follow this contract exactly. Base path: `/api/v1`. JSON
   `details` is optional (used for `validation_error`).
 - Error codes: `validation_error`(422), `invalid_credentials`(401), `unauthorized`(401), `invalid_token`(400/401),
   `token_expired`(401), `email_not_verified`(403), `account_disabled`(403), `forbidden`(403),
-  `invalid_mfa_code`(401), `not_found`(404), `conflict`(409), `rate_limited`(429), `internal_error`(500).
+  `invalid_mfa_code`(401), `not_found`(404), `conflict`(409), `rate_limited`(429), `internal_error`(500),
+  `reauthentication_required`(403: the operation needs a recent sign-in; sign in again and retry),
+  `account_exists_sign_in_required`(409, `POST /auth/google` only: see below).
+- `rate_limited` is also returned per **account** (from any IP) after 10 second-factor or current-password attempts
+  in 15 minutes (`/auth/login/2fa`, `/me/2fa/*`, `/me/change-password`).
+- `POST /auth/login` returns `rate_limited` (429) once **failed** password checks reach 10 per 15 minutes for the same
+  email from the same client (IPv4 address / IPv6 /64), or 100 per hour for that email from any client. Only failures
+  count, a correct password from another client still works, and unknown emails are throttled and answered identically
+  (no account enumeration). While blocked, even the correct password gets 429. Passkey and Google sign-in are not
+  throttled this way.
+- An MFA challenge (`mfa_token`) and a refresh token stop working (401 `invalid_token`) once the account's sessions
+  are revoked (password change/reset, admin revoke-sessions, deactivation).
 - Password policy: min 8 chars, max 128.
 
 ## Objects
@@ -51,25 +62,35 @@ Refresh token: random opaque string, stored hashed (SHA-256) in DB, rotated on e
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/healthz` (no /api/v1 prefix) | – | `{"status":"ok"}` |
-| POST | `/auth/register` | `{email, password, name}` | 201 `{user: User, message}` |
+| POST | `/auth/register` | `{email, password, name}` | 202 `{message}`: identical for new and already-registered addresses (see below) |
 | POST | `/auth/login` | `{email, password}` | 200 AuthResponse **or** MfaChallenge |
 | POST | `/auth/login/2fa` | `{mfa_token, code}` (TOTP 6 digits or recovery code) | 200 AuthResponse |
 | GET | `/auth/providers` | – | 200 `{"google": {"enabled": bool, "web_client_id": "..."}}` (public) |
-| POST | `/auth/google` | `{id_token}` (Google ID token) | 200 AuthResponse **or** MfaChallenge; 401 `invalid_token`; 404 `google_signin_disabled` |
+| POST | `/auth/google` | `{id_token}` (Google ID token) | 200 AuthResponse **or** MfaChallenge; 401 `invalid_token`; 404 `google_signin_disabled`; 409 `account_exists_sign_in_required` |
 | POST | `/auth/refresh` | `{refresh_token}` | 200 Tokens |
 | POST | `/auth/logout` | `{refresh_token}` | 204 |
 | POST | `/auth/verify-email` | `{token}` | 200 `{message}` |
 | POST | `/auth/resend-verification` | `{email}` | 202 `{message}` (always 202) |
 | POST | `/auth/forgot-password` | `{email}` | 202 `{message}` (always 202, no user enumeration) |
-| POST | `/auth/reset-password` | `{token, password}` | 200 `{message}` (revokes all refresh tokens) |
-| POST | `/auth/passkey/login/begin` | `{email?}` (omit for discoverable credential) | 200 `{session_id, options}` |
+| POST | `/auth/reset-password` | `{token, password}` | 200 `{message}` (signs out everywhere: refresh **and** access tokens) |
+| POST | `/auth/passkey/login/begin` | `{email?}` (accepted, ignored: always a discoverable ceremony, user verification required) | 200 `{session_id, options}` |
 | POST | `/auth/passkey/login/finish` | `{session_id, credential}` | 200 AuthResponse (passkey satisfies MFA) |
 
 Login when `REQUIRE_EMAIL_VERIFICATION=true` and email unverified → 403 `email_not_verified`.
 Disabled user → 403 `account_disabled`.
 
-Google sign-in (`POST /auth/google`): matched by Google `sub`, else by case-insensitive email (the identity is linked and the
-email marked verified), else a new account is created with `has_password=false`. TOTP users get the same MfaChallenge and
+Registration (`POST /auth/register`) never reveals whether an address is taken: it answers `202 {message}` with the same
+body either way and returns no user. A new address gets the verification email; an existing one is left untouched and its
+owner is emailed an "you already have an account" notice with sign-in and reset-password links (throttled per address,
+shared with forgot-password). Clients should show the message ("check your email") and send the user to sign in. With
+`REQUIRE_EMAIL_VERIFICATION=false` a fresh account can sign in immediately, which the registrant (only) can tell apart.
+
+Google sign-in (`POST /auth/google`): matched by Google `sub`, else by case-insensitive email **only when Google is
+authoritative for that address** (`gmail.com`/`googlemail.com`, or the ID token's `hd` claim equals the email's domain):
+the identity is linked and the email marked verified (if the local account was unverified, its password, TOTP, recovery
+codes, passkeys and sessions are wiped first). For any other domain with an existing account the call fails with 409
+`account_exists_sign_in_required`: sign in with the password instead. If no account has that email, a new account is
+created with `has_password=false` (for every domain). TOTP users get the same MfaChallenge and
 finish via `/auth/login/2fa`. Password login and `/me/change-password` fail for accounts without a password (generic
 `invalid_credentials` / 409 `password_not_set`); such users set one through forgot/reset-password. `/me/2fa/totp/disable`
 takes `password` only when `has_password=true`.
@@ -80,13 +101,13 @@ takes `password` only when `has_password=true`.
 |---|---|---|---|
 | GET | `/me` | – | User |
 | PATCH | `/me` | `{name}` | User |
-| POST | `/me/change-password` | `{current_password, new_password}` | 200 `{message}` |
-| POST | `/me/2fa/totp/setup` | – | `{secret, otpauth_url}` (pending until enabled) |
+| POST | `/me/change-password` | `{current_password, new_password}` | 200 `{message}` (signs out everywhere, including this session) |
+| POST | `/me/2fa/totp/setup` | – | `{secret, otpauth_url}` (pending until enabled; needs a recent sign-in) |
 | POST | `/me/2fa/totp/enable` | `{code}` | `{recovery_codes: [10 strings]}` |
 | POST | `/me/2fa/totp/disable` | `{password, code}` | 200 `{message}` |
 | POST | `/me/2fa/recovery-codes` | `{code}` | `{recovery_codes: [...]}` (regenerate) |
 | GET | `/me/passkeys` | – | `[Passkey]` |
-| POST | `/me/passkeys/register/begin` | – | `{session_id, options}` |
+| POST | `/me/passkeys/register/begin` | – | `{session_id, options}` (needs a recent sign-in) |
 | POST | `/me/passkeys/register/finish` | `{session_id, name, credential}` | 201 Passkey |
 | DELETE | `/me/passkeys/:id` | – | 204 |
 
@@ -99,7 +120,11 @@ takes `password` only when `has_password=true`.
 | GET | `/admin/users/:id` | – | User |
 | PATCH | `/admin/users/:id` | `{name?, role?, is_active?, email_verified?}` | User |
 | DELETE | `/admin/users/:id` | – | 204 (cannot delete self) |
-| POST | `/admin/users/:id/revoke-sessions` | – | 204 |
+| POST | `/admin/users/:id/revoke-sessions` | – | 204 (refresh and access tokens stop working at once) |
+
+Sessions: access tokens carry the user's session version; password change/reset, revoke-sessions and deactivation
+bump it, so outstanding access tokens get 401 `unauthorized` immediately (clients then try to refresh, which also fails).
+"Recent sign-in" means a password/Google/passkey login within `REAUTH_MAX_AGE` (10 min); refreshing does not renew it.
 | GET | `/admin/audit-logs` | `?page&per_page&user_id=` | Paginated<`{id, user_id, actor_id, action, ip, user_agent, metadata, created_at}`> |
 
 ## WebAuthn / passkeys
@@ -124,13 +149,14 @@ Both the SvelteKit webapp and Flutter (go_router, web + deep links) implement th
 `SMTP_PASSWORD`, `MAIL_FROM`, `FRONTEND_URL` (http://localhost:5173), `CORS_ALLOWED_ORIGINS` (comma list),
 `WEBAUTHN_RP_ID` (localhost), `WEBAUTHN_RP_NAME`, `WEBAUTHN_RP_ORIGINS` (comma list),
 `ADMIN_EMAIL` / `ADMIN_PASSWORD` (seed an admin on first start if set),
-`GOOGLE_CLIENT_IDS` (comma list of web/iOS/Android OAuth client IDs, first = web; empty disables Google sign-in).
+`GOOGLE_CLIENT_IDS` (comma list of web/iOS/Android OAuth client IDs, first = web; empty disables Google sign-in),
+`REAUTH_MAX_AGE` (10m), `SMTP_REQUIRE_TLS` (true in prod), `SWAGGER_ENABLED` (true; false in prod).
 
 ## Repository layout
 
 ```
 backend/        Go + Beego v2 API (module github.com/lingster/go-rest-template/backend), main at backend/main.go
-backend/swagger swagger.json generated by `bee generate docs` (committed), UI served at /swagger/
+backend/swagger swagger.json generated by `bee generate docs` (committed), UI served at /swagger/ (when `SWAGGER_ENABLED`)
 flutter_app/    Flutter client (Riverpod, go_router, dio, flutter_secure_storage)
 webapp/         SvelteKit (sv create, TS, Tailwind, adapter-cloudflare) auth + admin UI
 .github/        CI (push to main / PR) + release workflow (on release published)

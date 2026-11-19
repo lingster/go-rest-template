@@ -37,10 +37,15 @@ type CeremonySession struct {
 
 // SessionStore keeps ceremony sessions. Swap the in-memory version for Redis/DB to run multiple instances.
 type SessionStore interface {
-	Put(id string, s CeremonySession, ttl time.Duration)
+	// Put stores the session; it fails when the store is full.
+	Put(id string, s CeremonySession, ttl time.Duration) error
 	// Take returns and deletes the session (single use).
 	Take(id string) (CeremonySession, bool)
 }
+
+// MaxCeremonySessions bounds the in-memory store: login ceremonies can be started anonymously, so
+// without a cap a flood of /passkey/login/begin calls would grow memory without limit.
+const MaxCeremonySessions = 10_000
 
 type memEntry struct {
 	s       CeremonySession
@@ -57,16 +62,22 @@ func NewMemorySessionStore() *MemorySessionStore {
 	return &MemorySessionStore{m: map[string]memEntry{}}
 }
 
-func (s *MemorySessionStore) Put(id string, cs CeremonySession, ttl time.Duration) {
+func (s *MemorySessionStore) Put(id string, cs CeremonySession, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
-	for k, e := range s.m { // opportunistic sweep keeps the map bounded
-		if now.After(e.expires) {
-			delete(s.m, k)
+	if len(s.m) >= MaxCeremonySessions {
+		for k, e := range s.m { // sweep only when full, so a normal Put stays O(1)
+			if now.After(e.expires) {
+				delete(s.m, k)
+			}
+		}
+		if len(s.m) >= MaxCeremonySessions {
+			return apperr.RateLimited()
 		}
 	}
 	s.m[id] = memEntry{s: cs, expires: now.Add(ttl)}
+	return nil
 }
 
 func (s *MemorySessionStore) Take(id string) (CeremonySession, bool) {
@@ -176,14 +187,21 @@ func (s *PasskeyService) BeginRegistration(u *models.User) (string, *protocol.Cr
 	for i := range w.creds {
 		excl = append(excl, w.creds[i].Descriptor())
 	}
+	// A passkey alone signs the user in and satisfies MFA, so it must be discoverable (no username
+	// step) and user-verifying (PIN / biometric): a bare "touch" from a stolen key is not enough.
 	opts, session, err := s.wa.BeginRegistration(w,
-		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
+		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			ResidentKey: protocol.ResidentKeyRequirementRequired, RequireResidentKey: protocol.ResidentKeyRequired(),
+			UserVerification: protocol.VerificationRequired,
+		}),
 		webauthn.WithExclusions(excl))
 	if err != nil {
 		return "", nil, err
 	}
 	id := RandomToken(24)
-	s.sessions.Put(id, CeremonySession{Kind: CeremonyRegister, UserID: u.ID, Data: *session}, CeremonyTTL)
+	if err := s.sessions.Put(id, CeremonySession{Kind: CeremonyRegister, UserID: u.ID, Data: *session}, CeremonyTTL); err != nil {
+		return "", nil, err
+	}
 	return id, opts, nil
 }
 
@@ -226,44 +244,18 @@ func (s *PasskeyService) FinishRegistration(ctx context.Context, u *models.User,
 	return &p, nil
 }
 
-// BeginLogin starts a passkey login; email "" starts a discoverable-credential login.
-func (s *PasskeyService) BeginLogin(email string) (string, *protocol.CredentialAssertion, error) {
-	var (
-		opts    *protocol.CredentialAssertion
-		session *webauthn.SessionData
-		userID  string
-		err     error
-	)
-	var w *waUser
-	if email != "" {
-		u, uerr := s.users.GetByEmail(email)
-		switch {
-		case errors.Is(uerr, repositories.ErrNotFound):
-		case uerr != nil:
-			return "", nil, uerr
-		default:
-			lw, lerr := s.load(u)
-			if lerr != nil {
-				return "", nil, lerr
-			}
-			if len(lw.creds) > 0 {
-				w = lw
-			}
-		}
-	}
-	if w != nil {
-		userID = w.u.ID
-		opts, session, err = s.wa.BeginLogin(w)
-	} else {
-		// No email, unknown email or no passkeys: answer with a discoverable ceremony so the
-		// response is indistinguishable (no user enumeration).
-		opts, session, err = s.wa.BeginDiscoverableLogin()
-	}
+// BeginLogin starts a discoverable-credential passkey login. Every passkey is registered as
+// discoverable, so no email is needed; not using one means the response never reveals whether an
+// account exists or which credential IDs it has (no user enumeration).
+func (s *PasskeyService) BeginLogin() (string, *protocol.CredentialAssertion, error) {
+	opts, session, err := s.wa.BeginDiscoverableLogin(webauthn.WithUserVerification(protocol.VerificationRequired))
 	if err != nil {
 		return "", nil, err
 	}
 	id := RandomToken(24)
-	s.sessions.Put(id, CeremonySession{Kind: CeremonyLogin, UserID: userID, Data: *session}, CeremonyTTL)
+	if err := s.sessions.Put(id, CeremonySession{Kind: CeremonyLogin, Data: *session}, CeremonyTTL); err != nil {
+		return "", nil, err
+	}
 	return id, opts, nil
 }
 
@@ -277,39 +269,22 @@ func (s *PasskeyService) FinishLogin(sessionID string, credJSON []byte) (*models
 	if err != nil {
 		return nil, apperr.Validation(map[string]string{"credential": "malformed credential"})
 	}
-	var (
-		user *models.User
-		cred *webauthn.Credential
-	)
-	if cs.UserID != "" {
-		u, uerr := s.users.GetByID(cs.UserID)
+	wu, cred, err := s.wa.ValidatePasskeyLogin(func(_, userHandle []byte) (webauthn.User, error) {
+		u, uerr := s.users.GetByID(string(userHandle))
 		if uerr != nil {
-			return nil, apperr.InvalidCredentials()
+			return nil, uerr
 		}
-		w, lerr := s.load(u)
-		if lerr != nil {
-			return nil, lerr
-		}
-		if cred, err = s.wa.ValidateLogin(w, cs.Data, parsed); err != nil {
-			return nil, apperr.InvalidCredentials()
-		}
-		user = u
-	} else {
-		var wu webauthn.User
-		wu, cred, err = s.wa.ValidatePasskeyLogin(func(_, userHandle []byte) (webauthn.User, error) {
-			u, uerr := s.users.GetByID(string(userHandle))
-			if uerr != nil {
-				return nil, uerr
-			}
-			return s.load(u)
-		}, cs.Data, parsed)
-		if err != nil {
-			return nil, apperr.InvalidCredentials()
-		}
-		user = wu.(*waUser).u
+		return s.load(u)
+	}, cs.Data, parsed)
+	if err != nil {
+		return nil, apperr.InvalidCredentials()
+	}
+	if cred.Authenticator.CloneWarning {
+		// The signature counter went backwards: two copies of this credential exist.
+		return nil, apperr.InvalidCredentials()
 	}
 	s.touch(cred)
-	return user, nil
+	return wu.(*waUser).u, nil
 }
 
 // touch persists the updated sign counter and last-used timestamp.

@@ -101,7 +101,9 @@ func (s *AdminService) UpdateUser(ctx context.Context, actor *models.User, id st
 			return nil, err
 		}
 		if req.IsActive != nil && !u.IsActive {
-			_ = s.tokens.RevokeAll(u.ID)
+			if err := s.tokens.RevokeAll(u); err != nil {
+				return nil, err
+			}
 		}
 		s.audit.Log(ctx, AuditAdminUserUpdate, u.ID, actor.ID, changes)
 	}
@@ -132,10 +134,11 @@ func (s *AdminService) DeleteUser(ctx context.Context, actor *models.User, id st
 
 // RevokeSessions revokes every refresh token of the user.
 func (s *AdminService) RevokeSessions(ctx context.Context, actor *models.User, id string) error {
-	if _, err := s.userSvc.Get(id); err != nil {
+	u, err := s.userSvc.Get(id)
+	if err != nil {
 		return err
 	}
-	if err := s.tokens.RevokeAll(id); err != nil {
+	if err := s.tokens.RevokeAll(u); err != nil {
 		return err
 	}
 	s.audit.Log(ctx, AuditAdminRevokeSess, id, actor.ID, nil)
@@ -153,7 +156,11 @@ func (s *AdminService) SeedAdmin(ctx context.Context, email, password string) er
 	if email == "" || password == "" {
 		return nil
 	}
-	if _, err := s.repos.Users.GetByEmail(email); err == nil {
+	if existing, err := s.repos.Users.GetByEmail(email); err == nil {
+		if existing.Role != models.RoleAdmin {
+			// Someone registered the address first; never promote such an account automatically.
+			log.Printf("WARNING: ADMIN_EMAIL %s belongs to an existing non-admin account; no admin was seeded", email)
+		}
 		return nil
 	} else if !errors.Is(err, repositories.ErrNotFound) {
 		return err

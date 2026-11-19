@@ -26,7 +26,8 @@ func (s *AuthService) Providers() dto.ProvidersResponse {
 func (s *AuthService) googleEnabled() bool { return s.google != nil && s.cfg.GoogleEnabled() }
 
 // LoginGoogle signs a user in with a Google ID token. Accounts are matched by Google "sub", then by
-// verified email (linking the identity), otherwise a new password-less account is created. TOTP users
+// email when Google is authoritative for it (linking the identity; otherwise the user must sign in
+// with their password first), otherwise a new password-less account is created. TOTP users
 // still receive the MFA challenge: Google is a first factor only.
 func (s *AuthService) LoginGoogle(ctx context.Context, idToken string) (*LoginResult, error) {
 	if !s.googleEnabled() {
@@ -64,6 +65,10 @@ func (s *AuthService) resolveGoogleUser(ctx context.Context, c *GoogleClaims) (*
 		u, err := s.users.GetByEmail(email)
 		switch {
 		case err == nil:
+			if !googleAuthoritative(c, u.Email) {
+				s.audit.Log(ctx, AuditGoogleLinkDenied, u.ID, "", map[string]string{"provider": models.ProviderGoogle})
+				return nil, false, apperr.AccountExistsSignIn()
+			}
 			linked, err := s.linkGoogle(ctx, u, c)
 			if errors.Is(err, repositories.ErrDuplicate) {
 				continue
@@ -82,6 +87,24 @@ func (s *AuthService) resolveGoogleUser(ctx context.Context, c *GoogleClaims) (*
 	return nil, false, apperr.Conflict("Could not complete Google sign-in, please retry")
 }
 
+// googleConsumerDomains are the mail domains Google itself operates, so Google's word on those
+// addresses is authoritative.
+var googleConsumerDomains = map[string]bool{"gmail.com": true, "googlemail.com": true}
+
+// googleAuthoritative reports whether Google can vouch for control of the address: it is a Google-run
+// mailbox, or the token's hosted domain (Workspace "hd") is the address's own domain. For any other
+// domain "email_verified" only says Google once confirmed the address, which says nothing about who
+// controls the mailbox today (a lapsed domain can be re-registered), so it is not used to take over
+// an existing account.
+func googleAuthoritative(c *GoogleClaims, email string) bool {
+	i := strings.LastIndex(email, "@")
+	if i < 0 {
+		return false
+	}
+	domain := strings.ToLower(email[i+1:])
+	return googleConsumerDomains[domain] || (c.HostedDomain != "" && strings.EqualFold(c.HostedDomain, domain))
+}
+
 // linkGoogle attaches the Google identity to an existing account with the same (Google-verified) email.
 func (s *AuthService) linkGoogle(ctx context.Context, u *models.User, c *GoogleClaims) (*models.User, error) {
 	if !u.IsActive {
@@ -94,6 +117,7 @@ func (s *AuthService) linkGoogle(ctx context.Context, u *models.User, c *GoogleC
 		if err := s.resetUnverified(u); err != nil {
 			return nil, err
 		}
+		s.audit.Log(ctx, AuditUnverifiedReset, u.ID, "", map[string]string{"provider": models.ProviderGoogle})
 	}
 	if err := s.createIdentity(u.ID, c); err != nil {
 		return nil, err
@@ -117,7 +141,7 @@ func (s *AuthService) resetUnverified(u *models.User) error {
 			return err
 		}
 	}
-	return s.tokens.RevokeAll(u.ID)
+	return s.tokens.RevokeAll(u)
 }
 
 func (s *AuthService) createGoogleUser(ctx context.Context, email string, c *GoogleClaims) (*models.User, error) {

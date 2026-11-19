@@ -71,13 +71,13 @@ func TestSecretBox(t *testing.T) {
 func TestAccessTokenValidation(t *testing.T) {
 	c, _ := testutil.NewContainer(t)
 	u := newUser(t, c)
-	tok, _ := c.Tokens.IssueAccess(u)
+	tok, _ := c.Tokens.IssueAccess(u, 0)
 	claims, err := c.Tokens.ParseAccess(tok)
 	if err != nil || claims.Subject != u.ID || claims.Role != "user" || claims.Typ != "access" {
 		t.Fatalf("bad claims %+v %v", claims, err)
 	}
 	// an MFA token must not be usable as an access token
-	mfa, _ := c.Tokens.IssueMFAToken(u.ID)
+	mfa, _ := c.Tokens.IssueMFAToken(u)
 	if _, err := c.Tokens.ParseAccess(mfa); code(t, err) != apperr.CodeInvalidToken {
 		t.Errorf("mfa token accepted as access token: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestRefreshRotationAndReuseDetection(t *testing.T) {
 	c, _ := testutil.NewContainer(t)
 	u := newUser(t, c)
 
-	first, err := c.Tokens.Issue(u, "")
+	first, err := c.Tokens.Issue(u, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestRefreshRotationAndReuseDetection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first consume: %v", err)
 	}
-	second, err := c.Tokens.Issue(u, rt.FamilyID)
+	second, err := c.Tokens.Issue(u, rt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestRefreshRotationAndReuseDetection(t *testing.T) {
 		t.Fatalf("family must be revoked after reuse, got %v", err)
 	}
 	// Other families are unaffected.
-	other, _ := c.Tokens.Issue(u, "")
+	other, _ := c.Tokens.Issue(u, nil)
 	if _, err := c.Tokens.Consume(other.RefreshToken); err != nil {
 		t.Errorf("unrelated family affected: %v", err)
 	}
@@ -131,15 +131,15 @@ func TestRefreshRotationAndReuseDetection(t *testing.T) {
 func TestRefreshExpiryAndRevokeAll(t *testing.T) {
 	c, _ := testutil.NewContainer(t)
 	u := newUser(t, c)
-	tk, _ := c.Tokens.Issue(u, "")
+	tk, _ := c.Tokens.Issue(u, nil)
 	c.Tokens.Now = func() time.Time { return time.Now().Add(31 * 24 * time.Hour) }
 	_, err := c.Tokens.Consume(tk.RefreshToken)
 	c.Tokens.Now = time.Now
 	if code(t, err) != apperr.CodeTokenExpired {
 		t.Errorf("expected token_expired, got %v", err)
 	}
-	tk2, _ := c.Tokens.Issue(u, "")
-	if err := c.Tokens.RevokeAll(u.ID); err != nil {
+	tk2, _ := c.Tokens.Issue(u, nil)
+	if err := c.Tokens.RevokeAll(u); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Tokens.Consume(tk2.RefreshToken); err == nil {
@@ -252,5 +252,44 @@ func TestOneTimeTokens(t *testing.T) {
 	exp, _ := ott.Issue(u.ID, models.PurposeVerifyEmail, -time.Minute)
 	if _, err := ott.Consume(exp, models.PurposeVerifyEmail); err == nil {
 		t.Error("expired token accepted")
+	}
+}
+
+func TestAuthenticatedWithin(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	c := &services.Claims{AuthTime: now.Add(-5 * time.Minute).Unix()}
+	if !c.AuthenticatedWithin(10*time.Minute, now) || c.AuthenticatedWithin(time.Minute, now) {
+		t.Fatal("window check wrong")
+	}
+	if (&services.Claims{}).AuthenticatedWithin(10*time.Minute, now) {
+		t.Fatal("unknown auth time must count as stale")
+	}
+	if !(&services.Claims{}).AuthenticatedWithin(0, now) {
+		t.Fatal("non-positive max age disables the check")
+	}
+}
+
+func TestCeremonyStoreIsBounded(t *testing.T) {
+	s := services.NewMemorySessionStore()
+	for i := 0; i < services.MaxCeremonySessions; i++ {
+		if err := s.Put(services.RandomToken(8), services.CeremonySession{}, time.Minute); err != nil {
+			t.Fatalf("put %d: %v", i, err)
+		}
+	}
+	if err := s.Put("one-too-many", services.CeremonySession{}, time.Minute); code(t, err) != apperr.CodeRateLimited {
+		t.Fatalf("full store must refuse, got %v", err)
+	}
+}
+
+func TestRevokeAllBumpsTokenVersion(t *testing.T) {
+	c, _ := testutil.NewContainer(t)
+	u := newUser(t, c)
+	before := u.TokenVersion
+	if err := c.Tokens.RevokeAll(u); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := c.Repos.Users.GetByID(u.ID)
+	if u.TokenVersion != before+1 || stored.TokenVersion != u.TokenVersion {
+		t.Fatalf("version not bumped: in-memory %d stored %d", u.TokenVersion, stored.TokenVersion)
 	}
 }

@@ -122,6 +122,15 @@ func TestGoogleVerifier(t *testing.T) {
 			t.Fatalf("bad claims: %+v", c)
 		}
 	})
+	t.Run("hosted domain claim", func(t *testing.T) {
+		c, err := v.Verify(ctx, mutate(func(c jwt.MapClaims) { c["hd"] = "example.com" }))
+		if err != nil || c.HostedDomain != "example.com" {
+			t.Fatalf("hd not parsed: %+v %v", c, err)
+		}
+		if c, _ := v.Verify(ctx, sign(t, key, "k1", goodClaims(now))); c.HostedDomain != "" {
+			t.Fatalf("hd should be empty without the claim: %+v", c)
+		}
+	})
 	t.Run("issuer without scheme and second audience", func(t *testing.T) {
 		tok := mutate(func(c jwt.MapClaims) { c["iss"] = "accounts.google.com"; c["aud"] = "ios-client" })
 		if _, err := v.Verify(ctx, tok); err != nil {

@@ -22,6 +22,10 @@ func one(qs orm.QuerySeter, dest interface{}, cols ...string) error {
 
 func insert(m interface{}) error {
 	_, err := orm.NewOrm().Insert(m)
+	if errors.Is(err, orm.ErrLastInsertIdUnavailable) {
+		// Postgres (lib/pq) cannot report LastInsertId for our string primary keys; the row was inserted.
+		return nil
+	}
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate") {
@@ -72,6 +76,18 @@ func (*ormUserRepo) AdvanceTOTPStep(id string, step int64) (bool, error) {
 	n, err := orm.NewOrm().QueryTable(new(models.User)).Filter("id", id).Filter("totp_last_step__lt", step).
 		Update(orm.Params{"totp_last_step": step})
 	return n > 0, err
+}
+
+func (r *ormUserRepo) BumpTokenVersion(id string) (int64, error) {
+	if _, err := orm.NewOrm().QueryTable(new(models.User)).Filter("id", id).
+		Update(orm.Params{"token_version": orm.ColValue(orm.ColAdd, 1)}); err != nil {
+		return 0, err
+	}
+	u, err := r.GetByID(id)
+	if err != nil {
+		return 0, err
+	}
+	return u.TokenVersion, nil
 }
 
 func (*ormUserRepo) List(q string, offset, limit int) ([]*models.User, int64, error) {

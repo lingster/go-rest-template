@@ -92,12 +92,6 @@ class MfaChallenge extends AuthResult {
   final List<String> methods;
 }
 
-class RegisterResult {
-  const RegisterResult({required this.user, required this.message});
-  final User user;
-  final String message;
-}
-
 /// Public sign-in provider configuration (`GET /auth/providers`).
 class ProvidersInfo {
   const ProvidersInfo({

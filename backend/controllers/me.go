@@ -64,10 +64,15 @@ func (c *MeController) ChangePassword() {
 
 // TOTPSetup generates a pending TOTP secret
 // @Title TOTPSetup
+// @Description Requires a recent sign-in (REAUTH_MAX_AGE, default 10 min), otherwise 403 reauthentication_required.
 // @Security BearerAuth
 // @Success 200 {object} dto.TOTPSetupResponse
+// @Failure 403 reauthentication_required
 // @router /2fa/totp/setup [post]
 func (c *MeController) TOTPSetup() {
+	if !c.RequireRecentAuth() {
+		return
+	}
 	secret, url, err := c.C.MFA.Setup(c.CurrentUser())
 	if err != nil {
 		c.Fail(err)
@@ -149,10 +154,15 @@ func (c *MeController) ListPasskeys() {
 
 // PasskeyRegisterBegin starts passkey registration
 // @Title PasskeyRegisterBegin
+// @Description Requires a recent sign-in (REAUTH_MAX_AGE, default 10 min), otherwise 403 reauthentication_required.
 // @Security BearerAuth
 // @Success 200 {object} dto.CeremonyResponse
+// @Failure 403 reauthentication_required
 // @router /passkeys/register/begin [post]
 func (c *MeController) PasskeyRegisterBegin() {
+	if !c.RequireRecentAuth() {
+		return
+	}
 	sid, opts, err := c.C.Passkeys.BeginRegistration(c.CurrentUser())
 	if err != nil {
 		c.Fail(err)

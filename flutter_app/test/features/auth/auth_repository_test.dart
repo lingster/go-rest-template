@@ -141,17 +141,14 @@ void main() {
     expect(await storage.readRefreshToken(), 'refresh1');
   });
 
-  test('register returns user and message', () async {
-    setup(
-      (_) => FakeResponse(201, {'user': userJson(), 'message': 'check email'}),
-    );
-    final r = await repo.register(
+  test('register returns the message only', () async {
+    setup((_) => FakeResponse(202, {'message': 'check email'}));
+    final message = await repo.register(
       email: 'a@b.com',
       password: 'password1',
       name: 'Ada',
     );
-    expect(r.message, 'check email');
-    expect(r.user.name, 'Ada');
+    expect(message, 'check email');
   });
 
   test('restoreSession returns null without a stored token', () async {

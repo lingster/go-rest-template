@@ -84,7 +84,7 @@ author, email, tagline and landing page URL (sensible defaults are derived from 
    ```
 
    `--dry-run` shows what would change. The script removes itself and `copier.yml` when done. Install
-   `bee` (`go install github.com/beego/bee/v2@latest`) first so it can regenerate swagger, or run
+   `bee` (`go install github.com/beego/bee/v2@v2.3.0`) first so it can regenerate swagger, or run
    `make docs` in `backend/` afterwards.
 
 <!-- template-only:end -->

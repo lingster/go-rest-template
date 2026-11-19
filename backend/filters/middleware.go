@@ -6,12 +6,12 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lingster/go-rest-template/backend/apperr"
 	"github.com/lingster/go-rest-template/backend/config"
 	"github.com/lingster/go-rest-template/backend/httpx"
+	"github.com/lingster/go-rest-template/backend/ratelimit"
 	"github.com/lingster/go-rest-template/backend/services"
 )
 
@@ -158,53 +158,12 @@ func ForceJSONBody(prefix string) Middleware {
 	}
 }
 
-// Limiter decides whether a key may proceed.
-type Limiter interface{ Allow(key string) bool }
-
-// FixedWindowLimiter is a simple in-memory per-key fixed window rate limiter.
-type FixedWindowLimiter struct {
-	limit  int
-	window time.Duration
-	mu     sync.Mutex
-	hits   map[string]*windowCount
-	now    func() time.Time
-}
-
-type windowCount struct {
-	start time.Time
-	n     int
-}
-
-func NewFixedWindowLimiter(limit int, window time.Duration) *FixedWindowLimiter {
-	return &FixedWindowLimiter{limit: limit, window: window, hits: map[string]*windowCount{}, now: time.Now}
-}
-
-func (l *FixedWindowLimiter) Allow(key string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := l.now()
-	if len(l.hits) > 10000 { // bound memory
-		for k, w := range l.hits {
-			if now.Sub(w.start) >= l.window {
-				delete(l.hits, k)
-			}
-		}
-	}
-	w, ok := l.hits[key]
-	if !ok || now.Sub(w.start) >= l.window {
-		l.hits[key] = &windowCount{start: now, n: 1}
-		return true
-	}
-	w.n++
-	return w.n <= l.limit
-}
-
-// RateLimit applies limiter per client IP to requests whose path starts with prefix.
-func RateLimit(limiter Limiter, prefix string, trustProxy bool) Middleware {
+// RateLimit applies limiter per client (IPv4 address or IPv6 /64) to requests whose path starts with prefix.
+func RateLimit(limiter ratelimit.Limiter, prefix string, trustProxy bool) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if limiter != nil && strings.HasPrefix(r.URL.Path, prefix) && r.Method != http.MethodOptions &&
-				!limiter.Allow(httpx.ClientIP(r, trustProxy)) {
+				!limiter.Allow(ratelimit.ClientKey(httpx.ClientIP(r, trustProxy))) {
 				httpx.WriteError(w, apperr.RateLimited())
 				return
 			}

@@ -75,20 +75,16 @@ class AuthRepository {
     return _persist(result);
   }
 
-  Future<RegisterResult> register({
+  /// Returns the server's message. The response is the same whether or not the
+  /// address was already registered, so it carries no user.
+  Future<String> register({
     required String email,
     required String password,
     required String name,
   }) => api.post(
     '/auth/register',
     body: {'email': email, 'password': password, 'name': name},
-    decode: (j) {
-      final m = asMap(j);
-      return RegisterResult(
-        user: User.fromJson(asMap(m['user'])),
-        message: (m['message'] as String?) ?? '',
-      );
-    },
+    decode: decodeMessage,
   );
 
   Future<String> verifyEmail(String token) => api.post(

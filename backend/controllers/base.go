@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/beego/beego/v2/server/web"
 
@@ -87,6 +88,18 @@ func (b *BaseController) ReqContext() context.Context {
 func (b *BaseController) CurrentUser() *models.User {
 	u, _ := b.Ctx.Input.GetData(filters.CurrentUserKey).(*models.User)
 	return u
+}
+
+// RequireRecentAuth guards operations that add a sign-in credential (passkey, TOTP): a stolen or
+// long-lived session must not be able to plant a credential that survives a password reset. It
+// writes 403 reauthentication_required and returns false when the last sign-in is too old.
+func (b *BaseController) RequireRecentAuth() bool {
+	c, _ := b.Ctx.Input.GetData(filters.ClaimsKey).(*services.Claims)
+	if c == nil || !c.AuthenticatedWithin(b.C.Cfg.ReauthMaxAge, time.Now()) {
+		b.Fail(apperr.ReauthRequired())
+		return false
+	}
+	return true
 }
 
 // jsonBytes re-encodes a decoded JSON value (used for WebAuthn credential payloads).

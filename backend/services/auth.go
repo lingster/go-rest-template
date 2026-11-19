@@ -13,6 +13,7 @@ import (
 	"github.com/lingster/go-rest-template/backend/dto"
 	"github.com/lingster/go-rest-template/backend/mail"
 	"github.com/lingster/go-rest-template/backend/models"
+	"github.com/lingster/go-rest-template/backend/ratelimit"
 	"github.com/lingster/go-rest-template/backend/repositories"
 )
 
@@ -38,17 +39,26 @@ type AuthService struct {
 	userSvc  *UserService
 	mailer   mail.Mailer
 	audit    *AuditService
+	// MailLimiter caps emails sent per address by unauthenticated endpoints (nil disables).
+	MailLimiter ratelimit.Limiter
+	// LoginThrottle limits failed password logins per email+client and per email (nil disables).
+	LoginThrottle *LoginThrottle
 	// dummyHash equalises timing for unknown emails.
 	dummyHash string
 }
 
 func NewAuthService(cfg *config.Config, repos *repositories.Set, google GoogleTokenVerifier,
 	hasher PasswordHasher, tokens *TokenService, ott *OneTimeTokenService, mfa *MFAService, passkey *PasskeyService,
-	userSvc *UserService, mailer mail.Mailer, audit *AuditService) *AuthService {
+	userSvc *UserService, mailer mail.Mailer, audit *AuditService, mailLimiter ratelimit.Limiter) *AuthService {
 	dummy, _ := hasher.Hash("dummy-password-for-timing")
 	return &AuthService{cfg: cfg, users: repos.Users, passkeys: repos.Passkeys, recovery: repos.Recovery,
 		idents: repos.Identities, google: google, hasher: hasher, tokens: tokens, ott: ott, mfa: mfa,
-		passkey: passkey, userSvc: userSvc, mailer: mailer, audit: audit, dummyHash: dummy}
+		passkey: passkey, userSvc: userSvc, mailer: mailer, audit: audit, MailLimiter: mailLimiter, dummyHash: dummy}
+}
+
+// mailAllowed reports whether another email may be sent to the address (anti inbox-flooding).
+func (s *AuthService) mailAllowed(email string) bool {
+	return s.MailLimiter == nil || s.MailLimiter.Allow(email)
 }
 
 func (s *AuthService) link(path, token string) string {
@@ -71,7 +81,13 @@ func (s *AuthService) sendVerification(ctx context.Context, u *models.User) erro
 	return nil
 }
 
-// Register creates an account and sends the verification email.
+// registerAcceptedMessage is the one response to every registration attempt, so it cannot reveal
+// whether the address already has an account.
+const registerAcceptedMessage = "Check your email to finish setting up your account."
+
+// Register creates an account and sends the verification email. For an address that already has an
+// account nothing is changed: its owner is told by email instead. The response is identical either
+// way, and the password is hashed in both cases so timing does not differ either.
 func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) (*dto.RegisterResponse, error) {
 	hash, err := s.hasher.Hash(req.Password)
 	if err != nil {
@@ -82,24 +98,33 @@ func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) (*
 		ID: NewID(), Email: dto.NormalizeEmail(req.Email), Name: strings.TrimSpace(req.Name), PasswordHash: hash,
 		Role: models.RoleUser, IsActive: true, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.users.Create(u); errors.Is(err, repositories.ErrDuplicate) {
-		return nil, apperr.Conflict("An account with this email already exists")
-	} else if err != nil {
+	switch err := s.users.Create(u); {
+	case errors.Is(err, repositories.ErrDuplicate):
+		s.notifyExistingAccount(ctx, u.Email)
+	case err != nil:
 		return nil, err
+	default:
+		if err := s.sendVerification(ctx, u); err != nil {
+			return nil, err
+		}
+		s.audit.Log(ctx, AuditRegister, u.ID, u.ID, nil)
 	}
-	if err := s.sendVerification(ctx, u); err != nil {
-		return nil, err
-	}
-	s.audit.Log(ctx, AuditRegister, u.ID, u.ID, nil)
-	view, err := s.userSvc.Present(u)
+	return &dto.RegisterResponse{Message: registerAcceptedMessage}, nil
+}
+
+// notifyExistingAccount emails the owner of an address that someone tried to register again. It never
+// fails or reveals anything to the caller: lookup errors, disabled accounts and throttling are silent.
+func (s *AuthService) notifyExistingAccount(ctx context.Context, email string) {
+	u, err := s.users.GetByEmail(email)
 	if err != nil {
-		return nil, err
+		log.Printf("register: existing account lookup: %v", err)
+		return
 	}
-	msg := "Account created."
-	if s.cfg.RequireEmailVerification {
-		msg = "Account created. Please check your email to verify your address."
+	if !u.IsActive || !s.mailAllowed(u.Email) {
+		return
 	}
-	return &dto.RegisterResponse{User: view, Message: msg}, nil
+	s.sendMail(ctx, mail.AccountExists(u.Email, u.Name, s.cfg.FrontendURL+"/login", s.cfg.FrontendURL+"/forgot-password"))
+	s.audit.Log(ctx, AuditRegisterExisting, u.ID, "", nil)
 }
 
 // checkLoginAllowed enforces account state after credentials were proven.
@@ -118,12 +143,34 @@ func (s *AuthService) fail(ctx context.Context, userID, reason string) error {
 	return nil
 }
 
-// Login verifies email/password. Returns an MFA challenge when TOTP is enabled.
+// Login verifies email/password. Returns an MFA challenge when TOTP is enabled. Failed password checks
+// (unknown emails included) are throttled per email+client and per email; passkey and Google sign-in are not.
 func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*LoginResult, error) {
-	email := dto.NormalizeEmail(req.Email)
+	email, ip := dto.NormalizeEmail(req.Email), MetaFrom(ctx).IP
+	if err := s.LoginThrottle.Check(email, ip); err != nil {
+		return nil, err
+	}
+	u, err := s.verifyPassword(ctx, email, req.Password)
+	if err != nil {
+		if apperr.As(err).Code == apperr.CodeInvalidCredentials {
+			s.LoginThrottle.Fail(email, ip)
+		}
+		return nil, err
+	}
+	s.LoginThrottle.Succeed(email, ip)
+	if err := s.checkLoginAllowed(u); err != nil {
+		_ = s.fail(ctx, u.ID, apperr.As(err).Code)
+		return nil, err
+	}
+	return s.completeOrChallenge(ctx, u, "password")
+}
+
+// verifyPassword returns the user whose password matches, or invalid_credentials. Unknown emails and
+// password-less accounts run a dummy hash so all failures look and take the same.
+func (s *AuthService) verifyPassword(ctx context.Context, email, password string) (*models.User, error) {
 	u, err := s.users.GetByEmail(email)
 	if errors.Is(err, repositories.ErrNotFound) {
-		s.hasher.Verify(s.dummyHash, req.Password) // timing equalisation
+		s.hasher.Verify(s.dummyHash, password) // timing equalisation
 		_ = s.fail(ctx, "", "unknown_email")
 		return nil, apperr.InvalidCredentials()
 	}
@@ -131,19 +178,15 @@ func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*LoginR
 		return nil, err
 	}
 	if !u.HasPassword() {
-		s.hasher.Verify(s.dummyHash, req.Password) // same failure and timing as a wrong password
+		s.hasher.Verify(s.dummyHash, password) // same failure and timing as a wrong password
 		_ = s.fail(ctx, u.ID, "no_password")
 		return nil, apperr.InvalidCredentials()
 	}
-	if !s.hasher.Verify(u.PasswordHash, req.Password) {
+	if !s.hasher.Verify(u.PasswordHash, password) {
 		_ = s.fail(ctx, u.ID, "bad_password")
 		return nil, apperr.InvalidCredentials()
 	}
-	if err := s.checkLoginAllowed(u); err != nil {
-		_ = s.fail(ctx, u.ID, apperr.As(err).Code)
-		return nil, err
-	}
-	return s.completeOrChallenge(ctx, u, "password")
+	return u, nil
 }
 
 // completeOrChallenge finishes a first-factor login: a session, or an MFA challenge when TOTP is
@@ -152,7 +195,7 @@ func (s *AuthService) completeOrChallenge(ctx context.Context, u *models.User, m
 	if !u.TOTPEnabled {
 		return s.complete(ctx, u, method)
 	}
-	tok, err := s.tokens.IssueMFAToken(u.ID)
+	tok, err := s.tokens.IssueMFAToken(u)
 	if err != nil {
 		return nil, err
 	}
@@ -165,12 +208,12 @@ func (s *AuthService) completeOrChallenge(ctx context.Context, u *models.User, m
 
 // LoginMFA completes a login with a TOTP or recovery code.
 func (s *AuthService) LoginMFA(ctx context.Context, req *dto.MFALoginRequest) (*LoginResult, error) {
-	uid, err := s.tokens.ParseMFAToken(req.MFAToken)
+	claims, err := s.tokens.ParseMFAToken(req.MFAToken)
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.userSvc.Get(uid)
-	if err != nil {
+	u, err := s.userSvc.Get(claims.Subject)
+	if err != nil || claims.Ver != u.TokenVersion { // a revoked session also revokes pending challenges
 		return nil, apperr.InvalidToken("Invalid token")
 	}
 	if err := s.checkLoginAllowed(u); err != nil {
@@ -204,7 +247,7 @@ func (s *AuthService) LoginPasskey(ctx context.Context, sessionID string, credJS
 }
 
 func (s *AuthService) complete(ctx context.Context, u *models.User, method string) (*LoginResult, error) {
-	tokens, err := s.tokens.Issue(u, "")
+	tokens, err := s.tokens.Issue(u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -227,10 +270,13 @@ func (s *AuthService) Refresh(ctx context.Context, raw string) (*dto.Tokens, err
 		return nil, apperr.InvalidToken("Invalid refresh token")
 	}
 	if !u.IsActive {
-		_ = s.tokens.RevokeAll(u.ID)
+		_ = s.tokens.RevokeAll(u)
 		return nil, apperr.AccountDisabled()
 	}
-	return s.tokens.Issue(u, rt.FamilyID)
+	if err := s.tokens.CheckVersion(rt, u); err != nil {
+		return nil, err
+	}
+	return s.tokens.Issue(u, rt)
 }
 
 // Logout revokes the presented refresh token (idempotent).
@@ -266,7 +312,7 @@ func (s *AuthService) VerifyEmail(ctx context.Context, token string) error {
 // ResendVerification re-sends the verification mail; silent for unknown/verified accounts.
 func (s *AuthService) ResendVerification(ctx context.Context, email string) {
 	u, err := s.users.GetByEmail(dto.NormalizeEmail(email))
-	if err != nil || u.EmailVerified || !u.IsActive {
+	if err != nil || u.EmailVerified || !u.IsActive || !s.mailAllowed(u.Email) {
 		return
 	}
 	if err := s.sendVerification(ctx, u); err != nil {
@@ -277,7 +323,7 @@ func (s *AuthService) ResendVerification(ctx context.Context, email string) {
 // ForgotPassword emails a reset link if the account exists; silent otherwise.
 func (s *AuthService) ForgotPassword(ctx context.Context, email string) {
 	u, err := s.users.GetByEmail(dto.NormalizeEmail(email))
-	if err != nil || !u.IsActive {
+	if err != nil || !u.IsActive || !s.mailAllowed(u.Email) {
 		return
 	}
 	tok, err := s.ott.Issue(u.ID, models.PurposeResetPassword, ResetTokenTTL)
@@ -308,7 +354,7 @@ func (s *AuthService) ResetPassword(ctx context.Context, token, password string)
 	if err := s.users.Update(u, "PasswordHash", "EmailVerified", "UpdatedAt"); err != nil {
 		return err
 	}
-	if err := s.tokens.RevokeAll(u.ID); err != nil {
+	if err := s.tokens.RevokeAll(u); err != nil {
 		return err
 	}
 	s.audit.Log(ctx, AuditPasswordReset, u.ID, u.ID, nil)
@@ -322,8 +368,8 @@ func (s *AuthService) ChangePassword(ctx context.Context, u *models.User, curren
 		// (proof of mailbox control) rather than being able to set it with just an access token.
 		return apperr.PasswordNotSet()
 	}
-	if !s.hasher.Verify(u.PasswordHash, current) {
-		return apperr.InvalidCredentials()
+	if err := s.mfa.VerifyPassword(u, current); err != nil {
+		return err
 	}
 	hash, err := s.hasher.Hash(next)
 	if err != nil {
@@ -333,7 +379,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, u *models.User, curren
 	if err := s.users.Update(u, "PasswordHash", "UpdatedAt"); err != nil {
 		return err
 	}
-	if err := s.tokens.RevokeAll(u.ID); err != nil {
+	if err := s.tokens.RevokeAll(u); err != nil {
 		return err
 	}
 	s.sendMail(ctx, mail.PasswordChanged(u.Email, u.Name))

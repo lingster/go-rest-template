@@ -71,6 +71,12 @@ func (r resp) errCode() string { return r.str("error", "code") }
 
 func call(t *testing.T, method, path string, body interface{}, token string) resp {
 	t.Helper()
+	return callFrom(t, "", method, path, body, token)
+}
+
+// callFrom is call with a chosen client IP (empty keeps httptest's default).
+func callFrom(t *testing.T, ip, method, path string, body interface{}, token string) resp {
+	t.Helper()
 	var rdr *bytes.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -79,6 +85,9 @@ func call(t *testing.T, method, path string, body interface{}, token string) res
 		rdr = bytes.NewReader(nil)
 	}
 	req := httptest.NewRequest(method, path, rdr)
+	if ip != "" {
+		req.RemoteAddr = ip + ":4321"
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -103,7 +112,7 @@ func expect(t *testing.T, r resp, status int, code string) {
 func newVerifiedUser(t *testing.T, prefix string) (email, access, refresh string) {
 	t.Helper()
 	email = testutil.Email(prefix)
-	expect(t, call(t, "POST", "/api/v1/auth/register", map[string]string{"email": email, "password": password, "name": "Test"}, ""), 201, "")
+	expect(t, call(t, "POST", "/api/v1/auth/register", map[string]string{"email": email, "password": password, "name": "Test"}, ""), 202, "")
 	tok := mailer.LastToken(email, "Verify")
 	expect(t, call(t, "POST", "/api/v1/auth/verify-email", map[string]string{"token": tok}, ""), 200, "")
 	r := call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, "")
@@ -114,12 +123,10 @@ func newVerifiedUser(t *testing.T, prefix string) (email, access, refresh string
 func TestRegisterVerifyLoginRefreshLogout(t *testing.T) {
 	email := testutil.Email("flow")
 	r := call(t, "POST", "/api/v1/auth/register", map[string]string{"email": strings.ToUpper(email), "password": password, "name": "Ada"}, "")
-	expect(t, r, 201, "")
-	if r.str("user", "email") != email || r.str("user", "role") != "user" || r.str("message") == "" {
+	expect(t, r, 202, "")
+	if len(r.Body) != 1 || r.str("message") == "" {
 		t.Fatalf("bad register body: %s", r.Raw)
 	}
-	// duplicate
-	expect(t, call(t, "POST", "/api/v1/auth/register", map[string]string{"email": email, "password": password, "name": "x"}, ""), 409, "conflict")
 	// validation
 	v := call(t, "POST", "/api/v1/auth/register", map[string]string{"email": "nope", "password": "short", "name": ""}, "")
 	expect(t, v, 422, "validation_error")
@@ -228,8 +235,8 @@ func TestChangePasswordRevokesSessionsAndNotifies(t *testing.T) {
 	if mailer.Count(email) != before+1 || mailer.LastSubject(email) != "Your password was changed" {
 		t.Fatalf("notification email missing (subject %q)", mailer.LastSubject(email))
 	}
-	// the current access token keeps working until it expires
-	expect(t, call(t, "GET", "/api/v1/me", nil, access), 200, "")
+	// signing out everywhere includes outstanding access tokens, not only refresh tokens
+	expect(t, call(t, "GET", "/api/v1/me", nil, access), 401, "unauthorized")
 }
 
 func TestChangePassword(t *testing.T) {
@@ -346,6 +353,11 @@ func TestAdminAccessControlAndManagement(t *testing.T) {
 	expect(t, call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, ""), 403, "account_disabled")
 	expect(t, call(t, "GET", "/api/v1/me", nil, userAccess), 403, "account_disabled")
 	call(t, "PATCH", "/api/v1/admin/users/"+uid, map[string]interface{}{"is_active": true, "role": "admin"}, adminAccess)
+	// deactivation revoked the old token for good; a fresh login picks up the new role
+	expect(t, call(t, "GET", "/api/v1/admin/stats", nil, userAccess), 401, "unauthorized")
+	relog := call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, "")
+	expect(t, relog, 200, "")
+	userAccess = relog.str("tokens", "access_token")
 	expect(t, call(t, "GET", "/api/v1/admin/stats", nil, userAccess), 200, "")
 
 	// self-protection
@@ -357,6 +369,7 @@ func TestAdminAccessControlAndManagement(t *testing.T) {
 	if rs.Status != 204 {
 		t.Fatalf("revoke: %d %s", rs.Status, rs.Raw)
 	}
+	expect(t, call(t, "GET", "/api/v1/me", nil, userAccess), 401, "unauthorized")
 	if d := call(t, "DELETE", "/api/v1/admin/users/"+uid, nil, adminAccess); d.Status != 204 {
 		t.Fatalf("delete: %d %s", d.Status, d.Raw)
 	}
