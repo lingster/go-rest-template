@@ -29,6 +29,8 @@ export class SessionStore {
 
 	#accessToken: string | null = null;
 	#initPromise: Promise<void> | null = null;
+	/** Bumped whenever the session is replaced or dropped, so a stale restore never applies. */
+	#epoch = 0;
 
 	constructor() {
 		api.setAuthHooks({
@@ -57,20 +59,23 @@ export class SessionStore {
 	}
 
 	async #restore(): Promise<void> {
+		const epoch = this.#epoch;
+		const current = () => this.#epoch === epoch; // false once a sign-in/out happened meanwhile
 		try {
 			const tokens = await authApi.refresh(takeLegacyRefreshToken());
-			if (this.user) return; // signed in while the restore was in flight: keep that session
+			if (!current()) return;
 			this.#setTokens(tokens);
-			this.user = await meApi.getMe();
+			const user = await meApi.getMe();
+			if (current()) this.user = user;
 		} catch {
-			// no (valid) cookie: signed out, unless a sign-in finished meanwhile
-			if (!this.user) this.clear();
+			if (current()) this.clear(); // no (valid) cookie: signed out
 		} finally {
 			this.ready = true;
 		}
 	}
 
 	signIn(res: AuthResponse): void {
+		this.#epoch++;
 		this.#setTokens(res.tokens);
 		this.user = res.user;
 		this.ready = true;
@@ -86,18 +91,25 @@ export class SessionStore {
 		return user;
 	}
 
-	/** Revoke the session server-side and clear its cookie (best effort), then clear local state. */
+	/**
+	 * Clear local state, then revoke the session server-side and clear its cookie (best effort).
+	 * Logout is queued behind any in-flight refresh (see the API client), so it revokes the latest
+	 * rotated cookie; clearing again afterwards drops tokens that refresh delivered meanwhile.
+	 */
 	async signOut(): Promise<void> {
 		this.clear();
 		try {
 			await authApi.logout();
 		} catch {
 			// already signed out locally
+		} finally {
+			this.clear();
 		}
 	}
 
 	/** Drop all local auth state. */
 	clear(): void {
+		this.#epoch++;
 		this.#accessToken = null;
 		this.user = null;
 	}

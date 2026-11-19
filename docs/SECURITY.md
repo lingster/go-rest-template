@@ -9,6 +9,8 @@
   request (with `credentials: 'include'`); the API then sets the cookie on login / 2FA / Google / passkey login and refresh
   and leaves `refresh_token` out of the body. On load the webapp restores the session with a cookie `POST /auth/refresh`.
   A refresh token left in `localStorage` by an older build is sent once in the body to move it into the cookie, then deleted.
+  Requests that set or clear the cookie (login, 2FA, Google, passkey finish, refresh, logout) are sent one at a time, so a
+  slow restore or refresh can never overwrite a newer sign-in's cookie or re-create it after logout.
   - Cookie: `__Secure-rt` (`rt` when `COOKIE_SECURE=false`, plain-HTTP dev only), `HttpOnly; Secure; SameSite=Strict;
     Path=/api/v1/auth; Max-Age=<REFRESH_TOKEN_TTL>`, host-only unless `COOKIE_DOMAIN` is set. `__Host-` is not used because
     it forbids a path. Logout and failed refreshes clear it.

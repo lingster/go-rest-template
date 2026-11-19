@@ -44,6 +44,20 @@ export interface ApiClientOptions {
 	fetch?: typeof fetch;
 }
 
+/**
+ * Endpoints whose responses set or clear the refresh cookie. They are sent one at a time so a
+ * response can never overwrite the cookie written by a later request (e.g. a slow session restore
+ * clobbering a fresh login, or an in-flight refresh re-creating the cookie after logout).
+ */
+const COOKIE_WRITING_PATHS = new Set([
+	'/auth/login',
+	'/auth/login/2fa',
+	'/auth/google',
+	'/auth/passkey/login/finish',
+	'/auth/refresh',
+	'/auth/logout'
+]);
+
 /** 401 codes that mean "your access token is no good" (as opposed to bad credentials / MFA code). */
 const REFRESHABLE_CODES = new Set(['unauthorized', 'token_expired']);
 
@@ -67,6 +81,15 @@ export function createApiClient({ baseUrl, fetch: fetchImpl }: ApiClientOptions)
 	const root = `${baseUrl.replace(/\/+$/, '')}/api/v1`;
 	let hooks: AuthHooks | null = null;
 	let refreshing: Promise<void> | null = null;
+	/** Tail of the cookie-writing request queue (see COOKIE_WRITING_PATHS). */
+	let cookieQueue: Promise<unknown> = Promise.resolve();
+
+	/** Runs task after every previously queued cookie-writing request has settled. */
+	function serialized<T>(task: () => Promise<T>): Promise<T> {
+		const run = cookieQueue.then(task, task);
+		cookieQueue = run.catch(() => undefined);
+		return run;
+	}
 
 	const doFetch: typeof fetch = (...args) => (fetchImpl ?? globalThis.fetch)(...args);
 
@@ -87,13 +110,16 @@ export function createApiClient({ baseUrl, fetch: fetchImpl }: ApiClientOptions)
 		if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
 		const token = withAuth ? hooks?.getAccessToken() : null;
 		if (token) headers.Authorization = `Bearer ${token}`;
-		try {
-			return await doFetch(buildUrl(path, opts.query), {
+		const fetchIt = () =>
+			doFetch(buildUrl(path, opts.query), {
 				method: opts.method ?? 'GET',
 				headers,
 				credentials: 'include',
 				body: opts.body === undefined ? undefined : JSON.stringify(opts.body)
 			});
+		try {
+			// The cookie is stored when the response headers arrive, i.e. when fetch resolves.
+			return await (COOKIE_WRITING_PATHS.has(path) ? serialized(fetchIt) : fetchIt());
 		} catch {
 			throw new ApiError(0, 'network_error', 'Unable to reach the server. Please try again.');
 		}

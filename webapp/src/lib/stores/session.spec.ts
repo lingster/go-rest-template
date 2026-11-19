@@ -120,6 +120,34 @@ describe('session store', () => {
 		expect(session.user).toEqual(user);
 	});
 
+	it('a restore that resolves after a newer sign-in does not overwrite it', async () => {
+		const { session, authApi, meApi } = await load();
+		const stale: User = { ...user, id: 'u0', email: 'old@b.com' };
+		vi.mocked(authApi.refresh).mockResolvedValue(tokens);
+		let resolveMe!: (u: User) => void;
+		vi.mocked(meApi.getMe).mockReturnValue(new Promise((r) => (resolveMe = r)));
+		const init = session.init();
+		await vi.waitFor(() => expect(meApi.getMe).toHaveBeenCalled());
+		session.signIn(authResponse);
+		resolveMe(stale);
+		await init;
+		expect(session.user).toEqual(user);
+	});
+
+	it('signOut drops tokens delivered while logout was queued', async () => {
+		const { session, authApi, api } = await load();
+		const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+		vi.stubGlobal('fetch', fetchMock);
+		session.signIn(authResponse);
+		vi.mocked(authApi.logout).mockImplementation(async () => {
+			session.signIn({ ...authResponse, tokens: { ...tokens, access_token: 'late' } });
+		});
+		await session.signOut();
+		expect(session.user).toBeNull();
+		await api.request('/me');
+		expect(fetchMock.mock.calls[0][1].headers.Authorization).toBeUndefined();
+	});
+
 	it('signOut clears locally and revokes the cookie session', async () => {
 		const { session, authApi } = await load();
 		vi.mocked(authApi.logout).mockResolvedValue(undefined);

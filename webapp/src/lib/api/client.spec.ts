@@ -144,6 +144,44 @@ describe('api client', () => {
 		expect(refreshCalls).toBe(1);
 	});
 
+	it('sends cookie-writing requests one at a time, in order', async () => {
+		let releaseRefresh!: (r: Response) => void;
+		const fetchMock = vi.fn((url: string) =>
+			url.endsWith('/auth/refresh')
+				? new Promise<Response>((r) => (releaseRefresh = r))
+				: Promise.resolve(json(200, {}))
+		);
+		const { client } = setup(fetchMock);
+		const restore = client.request('/auth/refresh', { method: 'POST', auth: false });
+		const login = client.request('/auth/login', { method: 'POST', auth: false, body: {} });
+		const me = client.request('/me');
+		await me; // other endpoints are not queued
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		await new Promise((r) => setTimeout(r, 10));
+		const urls = () => fetchMock.mock.calls.map((c) => c[0]);
+		expect(urls()).not.toContain('http://api.test/api/v1/auth/login'); // waits for the refresh
+		releaseRefresh(json(200, newTokens));
+		await Promise.all([restore, login]);
+		expect(urls().filter((u) => u.includes('/auth/'))).toEqual([
+			'http://api.test/api/v1/auth/refresh',
+			'http://api.test/api/v1/auth/login'
+		]);
+	});
+
+	it('keeps the queue going after a failed cookie-writing request', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockRejectedValueOnce(new TypeError('offline'))
+			.mockResolvedValueOnce(json(204));
+		const { client } = setup(fetchMock);
+		await expect(
+			client.request('/auth/refresh', { method: 'POST', auth: false })
+		).rejects.toThrow();
+		await expect(
+			client.request('/auth/logout', { method: 'POST', auth: false })
+		).resolves.toBeUndefined();
+	});
+
 	it('logs out when the cookie refresh is rejected (no or revoked session)', async () => {
 		const fetchMock = vi
 			.fn()
