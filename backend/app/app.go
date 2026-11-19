@@ -101,7 +101,9 @@ func (a *App) Run(ctx context.Context) error {
 func buildHandler(cfg *config.Config, assets fs.FS) http.Handler {
 	mux := http.NewServeMux()
 	if assets != nil {
-		mux.Handle("/swagger/", swaggerHandler(assets))
+		if cfg.SwaggerEnabled { // otherwise /swagger/ falls through to the router's 404
+			mux.Handle("/swagger/", swaggerHandler(assets))
+		}
 		mux.Handle("/static/admin/", http.StripPrefix("/static/admin/", http.FileServerFS(mustSub(assets, "static/admin"))))
 		// theme.css is generated from conf/landing.json by the router; it must win over the file server below.
 		mux.Handle("/static/landing/theme.css", web.BeeApp.Handlers)

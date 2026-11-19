@@ -67,6 +67,9 @@ type Config struct {
 	// TrustProxy makes the client IP come from X-Forwarded-For (only enable behind a trusted reverse proxy).
 	TrustProxy bool
 
+	// SwaggerEnabled serves the API spec and Swagger UI at /swagger/ (SWAGGER_ENABLED, default off in prod).
+	SwaggerEnabled bool
+
 	// LandingStoreLinksLive shows the App Store / Google Play buttons on the landing page
 	// (LANDING_STORE_LINKS_LIVE); off until the apps are public, when "Coming soon" is shown instead.
 	LandingStoreLinksLive bool
@@ -110,6 +113,7 @@ func Load() (*Config, error) {
 		LandingStoreLinksLive:    envBool("LANDING_STORE_LINKS_LIVE", false),
 	}
 	c.SMTPRequireTLS = envBool("SMTP_REQUIRE_TLS", c.IsProd())
+	c.SwaggerEnabled = envBool("SWAGGER_ENABLED", !c.IsProd())
 	return c, c.Validate()
 }
 
@@ -156,6 +160,9 @@ func (c *Config) Warnings() []string {
 		if strings.HasPrefix(o, "http://") {
 			w = append(w, "WEBAUTHN_RP_ORIGINS contains a non-HTTPS origin in prod: "+o)
 		}
+	}
+	if c.SwaggerEnabled {
+		w = append(w, "SWAGGER_ENABLED=true in prod publishes the API surface at /swagger/")
 	}
 	if c.AdminPassword != "" {
 		w = append(w, "ADMIN_PASSWORD is set: remove it from the environment once the admin exists")

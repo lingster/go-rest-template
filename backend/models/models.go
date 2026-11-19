@@ -71,9 +71,12 @@ type RefreshToken struct {
 	Revoked   bool   `orm:"column(revoked);index"`
 	// AuthTime is when the user last proved a credential (unix seconds); it is carried across
 	// rotations so a refreshed session cannot pass a "recent login" check. 0 means unknown (stale).
-	AuthTime  int64     `orm:"column(auth_time)"`
-	ExpiresAt time.Time `orm:"column(expires_at);type(datetime)"`
-	CreatedAt time.Time `orm:"column(created_at);type(datetime)"`
+	AuthTime int64 `orm:"column(auth_time)"`
+	// TokenVersion is the user's session version when this token was issued. A rotation that raced a
+	// revoke-all carries the old version, so it is rejected instead of restoring the revoked session.
+	TokenVersion int64     `orm:"column(token_version)"`
+	ExpiresAt    time.Time `orm:"column(expires_at);type(datetime)"`
+	CreatedAt    time.Time `orm:"column(created_at);type(datetime)"`
 }
 
 func (*RefreshToken) TableName() string { return "refresh_tokens" }

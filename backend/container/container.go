@@ -79,6 +79,7 @@ func New(cfg *config.Config, repos *repositories.Set, mailer mail.Mailer, opts .
 	}
 	auth := services.NewAuthService(cfg, repos, o.google, hasher, tokens, ott, mfa, passkeys, users, mailer, audit,
 		services.NewMailLimiter())
+	auth.LoginThrottle = services.NewLoginThrottle()
 	admin := services.NewAdminService(repos, hasher, tokens, users, audit)
 	return &Container{Cfg: cfg, Repos: repos, Audit: audit, Tokens: tokens, Users: users, MFA: mfa,
 		Passkeys: passkeys, Auth: auth, Admin: admin, Mailer: mailer}, nil

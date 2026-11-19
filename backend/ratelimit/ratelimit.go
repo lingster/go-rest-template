@@ -12,6 +12,15 @@ import (
 // Limiter decides whether a key may proceed.
 type Limiter interface{ Allow(key string) bool }
 
+// FailureCounter budgets failures only: Blocked checks a key without consuming budget, Fail records
+// one failure, and Reset forgets a key (e.g. after a success). Unlike Limiter.Allow, successful
+// calls cost nothing, so an attacker cannot use the budget to lock out the legitimate user.
+type FailureCounter interface {
+	Blocked(key string) bool
+	Fail(key string)
+	Reset(key string)
+}
+
 // maxKeys bounds memory: past this many live keys the table is swept, and if every key is still
 // live (a flood of distinct keys) it is reset rather than allowed to grow without limit.
 const maxKeys = 100_000
@@ -50,6 +59,37 @@ func (l *FixedWindow) Allow(key string) bool {
 	}
 	w.n++
 	return w.n <= l.limit
+}
+
+// Blocked reports whether key has used up its failure budget in the current window, without counting.
+func (l *FixedWindow) Blocked(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.limit <= 0 {
+		return true
+	}
+	w, ok := l.hits[key]
+	return ok && l.Now().Sub(w.start) < l.window && w.n >= l.limit
+}
+
+// Fail records one failure for key.
+func (l *FixedWindow) Fail(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.Now()
+	l.sweepLocked(now)
+	if w, ok := l.hits[key]; ok && now.Sub(w.start) < l.window {
+		w.n++
+		return
+	}
+	l.hits[key] = &windowCount{start: now, n: 1}
+}
+
+// Reset forgets key's failures.
+func (l *FixedWindow) Reset(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.hits, key)
 }
 
 // sweepLocked drops expired windows, at most once per window so a large table cannot turn every

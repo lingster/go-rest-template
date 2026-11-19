@@ -57,7 +57,7 @@ func Config() *config.Config {
 		MailDriver:               "console", FrontendURL: "http://localhost:5173",
 		CORSAllowedOrigins: []string{"http://localhost:5173"},
 		WebAuthnRPID:       "localhost", WebAuthnRPName: "Test", WebAuthnRPOrigins: []string{"http://localhost:5173"},
-		RateLimitPerMinute: 100000, BcryptCost: 4,
+		RateLimitPerMinute: 100000, BcryptCost: 4, SwaggerEnabled: true,
 	}
 }
 

@@ -35,7 +35,7 @@ make run                        # http://localhost:8080 ; DB at data/app.db ; em
 ```
 
 * Health: `GET /healthz` -> `{"status":"ok","version":"dev"}`
-* Swagger UI: <http://localhost:8080/swagger/> (spec: `/swagger/swagger.json`)
+* Swagger UI: <http://localhost:8080/swagger/> (spec: `/swagger/swagger.json`; off by default in prod, see `SWAGGER_ENABLED`)
 * Admin UI: <http://localhost:8080/admin-ui/> (set `ADMIN_EMAIL` / `ADMIN_PASSWORD` to seed an admin)
 
 With `MAIL_DRIVER=console` verification/reset links are printed in the server log.
@@ -78,6 +78,7 @@ digest-pinned images, and Postgres sits on a network Mailpit cannot reach.
 | `GOOGLE_CLIENT_IDS` | empty | comma list of Google OAuth client IDs (first = web). Empty disables Sign in with Google (`POST /auth/google` -> 404 `google_signin_disabled`) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | empty | seeds a verified admin on start if it doesn't exist |
 | `RATE_LIMIT_PER_MINUTE` | `60` | per client IP across `/api/v1/auth/*`; `0` disables (extra, not in the contract) |
+| `SWAGGER_ENABLED` | `true` unless `APP_ENV=prod` | serve the spec and Swagger UI at `/swagger/`; when off the path is a 404. Prod warns at startup if you turn it on |
 | `BCRYPT_COST` | `12` | |
 | `TRUST_PROXY` | `false` | use the **last** `X-Forwarded-For` entry (the one your proxy appended) as the client IP; only behind exactly one trusted proxy, or have the edge overwrite the header |
 | `LANDING_STORE_LINKS_LIVE` | `false` | env-only deploy switch: show the App Store / Google Play buttons on the landing page `/` (otherwise the "coming soon" text). All other landing content, theme and SEO data lives in `conf/landing.json` (validated at startup; see "Customise your landing page" in the root README) |

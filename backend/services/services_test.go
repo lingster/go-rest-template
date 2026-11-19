@@ -77,7 +77,7 @@ func TestAccessTokenValidation(t *testing.T) {
 		t.Fatalf("bad claims %+v %v", claims, err)
 	}
 	// an MFA token must not be usable as an access token
-	mfa, _ := c.Tokens.IssueMFAToken(u.ID)
+	mfa, _ := c.Tokens.IssueMFAToken(u)
 	if _, err := c.Tokens.ParseAccess(mfa); code(t, err) != apperr.CodeInvalidToken {
 		t.Errorf("mfa token accepted as access token: %v", err)
 	}

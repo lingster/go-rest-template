@@ -11,6 +11,13 @@
 
 - Access tokens carry the user's session version (`ver`). Password change/reset, admin "revoke sessions", deactivation
   and the Google pre-hijack wipe bump it, so outstanding access tokens stop working at once, not after their 15 min TTL.
+- The version is bound to the other bearer credentials too. Each refresh-token row stores the version it was issued
+  under, and `/auth/refresh` rejects (and revokes the family of) a token whose version is not the user's current one,
+  read after the token is consumed. This closes a race where a rotation that loaded the user before a revoke-all
+  could mint a refresh token after the old rows were revoked and later restore the session. The MFA challenge JWT
+  also carries `ver`; completing `/auth/login/2fa` fails with 401 if the version moved, so a pending challenge does not
+  survive a password reset or revoke-sessions. Refresh tokens issued before this column existed count as version 0,
+  so users whose version is already above 0 sign in once more after the upgrade.
 - Access tokens also carry `auth_time`, the last time a credential was proven. Refresh rotation keeps it, so a stolen
   refresh token cannot be used to look "freshly signed in". Adding a credential (passkey registration, TOTP setup)
   requires `auth_time` within `REAUTH_MAX_AGE` (10 min) or returns 403 `reauthentication_required`; otherwise a stolen
@@ -39,12 +46,27 @@
   IPv6 addresses does not reset the budget. With `TRUST_PROXY=true` only the **last** `X-Forwarded-For` entry is used;
   earlier entries are client-supplied and would let anyone choose their own rate-limit key and audit-log IP.
 - Per account (any IP): 10 second-factor attempts and 10 current-password checks per 15 min, then `429 rate_limited`.
-  Without this, a botnet that knows the password can brute-force a 6-digit TOTP in minutes. Password *login* is not
-  limited per account on purpose (that would let anyone lock out any user); rely on the per-IP limit and the edge.
+  Without this, a botnet that knows the password can brute-force a 6-digit TOTP in minutes.
+- Password login counts **failed password checks only**, in two buckets: 10 per 15 min per (email, client IP / IPv6 /64),
+  and 100 per hour per email from anywhere. Past either, `/auth/login` answers `429 rate_limited` before verifying
+  the password (so no hash is computed, and even the correct password is refused). Because the tight bucket is scoped
+  to the client, an attacker cannot lock the real user out: their address and sign-ins from other addresses keep
+  working, and a correct password clears that client's bucket. The per-email ceiling bounds distributed guessing
+  and is deliberately high; at that point the account owner can still sign in with a passkey or Google. Unknown
+  emails are counted and answered identically, so throttling reveals nothing about which accounts exist.
+  **Passkey and Google sign-in are not throttled by this**: they are the user's escape hatch during an attack, and
+  neither accepts guessable secrets. Checking and recording are separate steps, so a burst of concurrent requests
+  can overshoot a bucket by the number of requests in flight; the per-IP limit above bounds that.
 - At most 5 forgot-password / resend-verification emails per address per hour (anti inbox-flooding).
 - The limiters are in-memory and per-instance. Behind multiple instances, enforce limits at the edge (Cloudflare rules) or move the counters to a shared store (`ratelimit.Limiter` interface).
 - Password reset and resend-verification always respond 202 to avoid user enumeration. Mail is delivered by a background
   queue, so the response time does not reveal whether an email was sent.
+
+## API documentation
+
+- `SWAGGER_ENABLED` controls the spec and Swagger UI at `/swagger/`. It defaults to **on** in dev and **off** when
+  `APP_ENV=prod` (the path then returns 404, like any unknown route). Enabling it in prod publishes the API surface to
+  everyone and logs a startup warning; if you need it there, put it behind your edge's authentication.
 
 ## Email
 
@@ -78,8 +100,6 @@
 - Linking a Google sign-in to an existing account trusts Google's `email_verified`. For addresses outside Gmail/Workspace
   domains that is Google's verification at account creation; consider requiring the `hd` claim, or skipping auto-linking
   for such addresses, if that matters to you.
-- The swagger UI at `/swagger/` is public. Put it behind auth or drop it from production builds if you do not want the API
-  surface published.
 
 ## Reporting a vulnerability
 

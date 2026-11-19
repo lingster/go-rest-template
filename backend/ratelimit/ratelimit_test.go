@@ -49,3 +49,65 @@ func TestClientKey(t *testing.T) {
 		}
 	}
 }
+
+func TestFailureCounterBlocksOnlyAfterLimitFailures(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	l := ratelimit.NewFixedWindow(3, time.Minute)
+	l.Now = func() time.Time { return now }
+	var fc ratelimit.FailureCounter = l
+	for i := 0; i < 10; i++ { // checking never consumes budget
+		if fc.Blocked("a") {
+			t.Fatal("untouched key must not be blocked")
+		}
+	}
+	fc.Fail("a")
+	fc.Fail("a")
+	if fc.Blocked("a") {
+		t.Fatal("2 failures of 3 must not block")
+	}
+	fc.Fail("a")
+	if !fc.Blocked("a") || !fc.Blocked("a") {
+		t.Fatal("3 failures must block, and checking must stay blocked")
+	}
+	if fc.Blocked("b") {
+		t.Fatal("keys must be independent")
+	}
+	now = now.Add(time.Minute)
+	if fc.Blocked("a") {
+		t.Fatal("window must reset")
+	}
+	fc.Fail("a")
+	if fc.Blocked("a") {
+		t.Fatal("a new window starts at one failure")
+	}
+}
+
+func TestFailureCounterReset(t *testing.T) {
+	l := ratelimit.NewFixedWindow(1, time.Hour)
+	l.Fail("a")
+	if !l.Blocked("a") {
+		t.Fatal("expected blocked")
+	}
+	l.Reset("a")
+	if l.Blocked("a") {
+		t.Fatal("reset must clear the key")
+	}
+	l.Reset("never-seen") // no-op
+}
+
+func TestFailureCounterZeroLimitBlocksEverything(t *testing.T) {
+	if !ratelimit.NewFixedWindow(0, time.Minute).Blocked("a") {
+		t.Fatal("limit 0 must block, like Allow")
+	}
+}
+
+func TestFailureCounterBoundedUnderKeyFlood(t *testing.T) {
+	l := ratelimit.NewFixedWindow(1, time.Hour)
+	for i := 0; i < 250_000; i++ {
+		l.Fail(fmt.Sprintf("k%d", i))
+	}
+	l.Fail("fresh")
+	if !l.Blocked("fresh") {
+		t.Fatal("a recorded failure must count after the table was capped")
+	}
+}

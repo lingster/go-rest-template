@@ -71,6 +71,12 @@ func (r resp) errCode() string { return r.str("error", "code") }
 
 func call(t *testing.T, method, path string, body interface{}, token string) resp {
 	t.Helper()
+	return callFrom(t, "", method, path, body, token)
+}
+
+// callFrom is call with a chosen client IP (empty keeps httptest's default).
+func callFrom(t *testing.T, ip, method, path string, body interface{}, token string) resp {
+	t.Helper()
 	var rdr *bytes.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -79,6 +85,9 @@ func call(t *testing.T, method, path string, body interface{}, token string) res
 		rdr = bytes.NewReader(nil)
 	}
 	req := httptest.NewRequest(method, path, rdr)
+	if ip != "" {
+		req.RemoteAddr = ip + ":4321"
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

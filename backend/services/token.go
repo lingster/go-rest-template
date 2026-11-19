@@ -74,9 +74,12 @@ func (s *TokenService) IssueAccess(u *models.User, authTime int64) (string, erro
 	return s.sign(c)
 }
 
-// IssueMFAToken creates the short-lived token handed out after a correct password.
-func (s *TokenService) IssueMFAToken(userID string) (string, error) {
-	return s.sign(s.claims(userID, TypMFA, "", MFATokenTTL))
+// IssueMFAToken creates the short-lived token handed out after a correct password. It carries the
+// user's session version, so revoking sessions (password reset, admin revoke) also kills challenges.
+func (s *TokenService) IssueMFAToken(u *models.User) (string, error) {
+	c := s.claims(u.ID, TypMFA, "", MFATokenTTL)
+	c.Ver = u.TokenVersion
+	return s.sign(c)
 }
 
 func (s *TokenService) parse(tok, wantTyp string) (*Claims, error) {
@@ -98,14 +101,9 @@ func (s *TokenService) parse(tok, wantTyp string) (*Claims, error) {
 // ParseAccess validates an access token.
 func (s *TokenService) ParseAccess(tok string) (*Claims, error) { return s.parse(tok, TypAccess) }
 
-// ParseMFAToken validates an MFA challenge token and returns the user id.
-func (s *TokenService) ParseMFAToken(tok string) (string, error) {
-	c, err := s.parse(tok, TypMFA)
-	if err != nil {
-		return "", err
-	}
-	return c.Subject, nil
-}
+// ParseMFAToken validates an MFA challenge token and returns its claims (Subject is the user id, Ver
+// the session version it was issued for).
+func (s *TokenService) ParseMFAToken(tok string) (*Claims, error) { return s.parse(tok, TypMFA) }
 
 // Issue creates a token pair. prev nil starts a new family (fresh login: the credential was proven now);
 // otherwise the pair continues prev's family and keeps its original authentication time.
@@ -122,7 +120,7 @@ func (s *TokenService) Issue(u *models.User, prev *models.RefreshToken) (*dto.To
 	raw := RandomToken(32)
 	rt := &models.RefreshToken{
 		ID: NewID(), UserID: u.ID, FamilyID: familyID, TokenHash: HashToken(raw), AuthTime: authTime,
-		ExpiresAt: now.Add(s.refreshTTL), CreatedAt: now,
+		TokenVersion: u.TokenVersion, ExpiresAt: now.Add(s.refreshTTL), CreatedAt: now,
 	}
 	if err := s.refresh.Create(rt); err != nil {
 		return nil, err
@@ -156,6 +154,17 @@ func (s *TokenService) Consume(raw string) (*models.RefreshToken, error) {
 		return nil, apperr.InvalidToken("Refresh token reuse detected; session revoked")
 	}
 	return rt, nil
+}
+
+// CheckVersion rejects a consumed refresh token whose session version is not the user's current one
+// (u must be read after Consume). Such a token comes from a rotation that raced RevokeAll, so its
+// family is revoked rather than letting a later refresh restore the revoked session.
+func (s *TokenService) CheckVersion(rt *models.RefreshToken, u *models.User) error {
+	if rt.TokenVersion == u.TokenVersion {
+		return nil
+	}
+	_ = s.refresh.RevokeFamily(rt.FamilyID)
+	return apperr.InvalidToken("Session revoked")
 }
 
 func (s *TokenService) revokeFamilyOnReuse(rt *models.RefreshToken) {

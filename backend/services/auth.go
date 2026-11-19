@@ -41,6 +41,8 @@ type AuthService struct {
 	audit    *AuditService
 	// MailLimiter caps emails sent per address by unauthenticated endpoints (nil disables).
 	MailLimiter ratelimit.Limiter
+	// LoginThrottle limits failed password logins per email+client and per email (nil disables).
+	LoginThrottle *LoginThrottle
 	// dummyHash equalises timing for unknown emails.
 	dummyHash string
 }
@@ -126,12 +128,34 @@ func (s *AuthService) fail(ctx context.Context, userID, reason string) error {
 	return nil
 }
 
-// Login verifies email/password. Returns an MFA challenge when TOTP is enabled.
+// Login verifies email/password. Returns an MFA challenge when TOTP is enabled. Failed password checks
+// (unknown emails included) are throttled per email+client and per email; passkey and Google sign-in are not.
 func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*LoginResult, error) {
-	email := dto.NormalizeEmail(req.Email)
+	email, ip := dto.NormalizeEmail(req.Email), MetaFrom(ctx).IP
+	if err := s.LoginThrottle.Check(email, ip); err != nil {
+		return nil, err
+	}
+	u, err := s.verifyPassword(ctx, email, req.Password)
+	if err != nil {
+		if apperr.As(err).Code == apperr.CodeInvalidCredentials {
+			s.LoginThrottle.Fail(email, ip)
+		}
+		return nil, err
+	}
+	s.LoginThrottle.Succeed(email, ip)
+	if err := s.checkLoginAllowed(u); err != nil {
+		_ = s.fail(ctx, u.ID, apperr.As(err).Code)
+		return nil, err
+	}
+	return s.completeOrChallenge(ctx, u, "password")
+}
+
+// verifyPassword returns the user whose password matches, or invalid_credentials. Unknown emails and
+// password-less accounts run a dummy hash so all failures look and take the same.
+func (s *AuthService) verifyPassword(ctx context.Context, email, password string) (*models.User, error) {
 	u, err := s.users.GetByEmail(email)
 	if errors.Is(err, repositories.ErrNotFound) {
-		s.hasher.Verify(s.dummyHash, req.Password) // timing equalisation
+		s.hasher.Verify(s.dummyHash, password) // timing equalisation
 		_ = s.fail(ctx, "", "unknown_email")
 		return nil, apperr.InvalidCredentials()
 	}
@@ -139,19 +163,15 @@ func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*LoginR
 		return nil, err
 	}
 	if !u.HasPassword() {
-		s.hasher.Verify(s.dummyHash, req.Password) // same failure and timing as a wrong password
+		s.hasher.Verify(s.dummyHash, password) // same failure and timing as a wrong password
 		_ = s.fail(ctx, u.ID, "no_password")
 		return nil, apperr.InvalidCredentials()
 	}
-	if !s.hasher.Verify(u.PasswordHash, req.Password) {
+	if !s.hasher.Verify(u.PasswordHash, password) {
 		_ = s.fail(ctx, u.ID, "bad_password")
 		return nil, apperr.InvalidCredentials()
 	}
-	if err := s.checkLoginAllowed(u); err != nil {
-		_ = s.fail(ctx, u.ID, apperr.As(err).Code)
-		return nil, err
-	}
-	return s.completeOrChallenge(ctx, u, "password")
+	return u, nil
 }
 
 // completeOrChallenge finishes a first-factor login: a session, or an MFA challenge when TOTP is
@@ -160,7 +180,7 @@ func (s *AuthService) completeOrChallenge(ctx context.Context, u *models.User, m
 	if !u.TOTPEnabled {
 		return s.complete(ctx, u, method)
 	}
-	tok, err := s.tokens.IssueMFAToken(u.ID)
+	tok, err := s.tokens.IssueMFAToken(u)
 	if err != nil {
 		return nil, err
 	}
@@ -173,12 +193,12 @@ func (s *AuthService) completeOrChallenge(ctx context.Context, u *models.User, m
 
 // LoginMFA completes a login with a TOTP or recovery code.
 func (s *AuthService) LoginMFA(ctx context.Context, req *dto.MFALoginRequest) (*LoginResult, error) {
-	uid, err := s.tokens.ParseMFAToken(req.MFAToken)
+	claims, err := s.tokens.ParseMFAToken(req.MFAToken)
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.userSvc.Get(uid)
-	if err != nil {
+	u, err := s.userSvc.Get(claims.Subject)
+	if err != nil || claims.Ver != u.TokenVersion { // a revoked session also revokes pending challenges
 		return nil, apperr.InvalidToken("Invalid token")
 	}
 	if err := s.checkLoginAllowed(u); err != nil {
@@ -237,6 +257,9 @@ func (s *AuthService) Refresh(ctx context.Context, raw string) (*dto.Tokens, err
 	if !u.IsActive {
 		_ = s.tokens.RevokeAll(u)
 		return nil, apperr.AccountDisabled()
+	}
+	if err := s.tokens.CheckVersion(rt, u); err != nil {
+		return nil, err
 	}
 	return s.tokens.Issue(u, rt)
 }
