@@ -24,6 +24,7 @@ const (
 	CodeGoogleDisabled     = "google_signin_disabled"
 	CodePasswordNotSet     = "password_not_set"
 	CodeReauthRequired     = "reauthentication_required"
+	CodeAccountExists      = "account_exists_sign_in_required"
 )
 
 // Error is an error carrying an HTTP status and a contract error code.
@@ -74,6 +75,12 @@ func GoogleDisabled() *Error {
 // PasswordNotSet is returned by password-based operations on accounts that have no password.
 func PasswordNotSet() *Error {
 	return New(http.StatusConflict, CodePasswordNotSet, "This account has no password. Use \"forgot password\" to set one")
+}
+
+// AccountExistsSignIn is returned when a Google identity cannot be linked to an existing account
+// automatically because Google is not authoritative for that email address.
+func AccountExistsSignIn() *Error {
+	return New(http.StatusConflict, CodeAccountExists, "An account with this email already exists. Sign in with your password to continue.")
 }
 
 // ReauthRequired is returned by sensitive operations when the session's last sign-in is too old.

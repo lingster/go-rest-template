@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:saas_app/core/network/api_exception.dart';
-import 'package:saas_app/features/auth/data/auth_models.dart';
 
-import '../../helpers/fake_adapter.dart';
 import '../../helpers/pump_app.dart';
 
 Future<void> _openRegister(WidgetTester tester) async {
@@ -49,12 +47,7 @@ void main() {
         password: any(named: 'password'),
         name: any(named: 'name'),
       ),
-    ).thenAnswer(
-      (_) async => RegisterResult(
-        user: User.fromJson(userJson()),
-        message: 'Please verify your email',
-      ),
-    );
+    ).thenAnswer((_) async => 'Please verify your email');
     await _openRegister(tester);
     await tester.enterText(_field('Name'), 'Ada');
     await tester.enterText(_field('Email'), 'a@b.com');
@@ -67,9 +60,12 @@ void main() {
       () => repo.register(email: 'a@b.com', password: 'password1', name: 'Ada'),
     ).called(1);
     expect(find.text('Please verify your email'), findsOneWidget);
+    expect(find.text('Check your email'), findsOneWidget);
   });
 
-  testWidgets('shows field details for validation_error', (tester) async {
+  testWidgets('shows the server error message when registration fails', (
+    tester,
+  ) async {
     final repo = await pumpApp(tester);
     when(
       () => repo.register(

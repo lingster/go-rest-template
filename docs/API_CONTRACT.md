@@ -15,7 +15,8 @@ All three projects MUST follow this contract exactly. Base path: `/api/v1`. JSON
 - Error codes: `validation_error`(422), `invalid_credentials`(401), `unauthorized`(401), `invalid_token`(400/401),
   `token_expired`(401), `email_not_verified`(403), `account_disabled`(403), `forbidden`(403),
   `invalid_mfa_code`(401), `not_found`(404), `conflict`(409), `rate_limited`(429), `internal_error`(500),
-  `reauthentication_required`(403: the operation needs a recent sign-in; sign in again and retry).
+  `reauthentication_required`(403: the operation needs a recent sign-in; sign in again and retry),
+  `account_exists_sign_in_required`(409, `POST /auth/google` only: see below).
 - `rate_limited` is also returned per **account** (from any IP) after 10 second-factor or current-password attempts
   in 15 minutes (`/auth/login/2fa`, `/me/2fa/*`, `/me/change-password`).
 - `POST /auth/login` returns `rate_limited` (429) once **failed** password checks reach 10 per 15 minutes for the same
@@ -61,11 +62,11 @@ Refresh token: random opaque string, stored hashed (SHA-256) in DB, rotated on e
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/healthz` (no /api/v1 prefix) | – | `{"status":"ok"}` |
-| POST | `/auth/register` | `{email, password, name}` | 201 `{user: User, message}` |
+| POST | `/auth/register` | `{email, password, name}` | 202 `{message}`: identical for new and already-registered addresses (see below) |
 | POST | `/auth/login` | `{email, password}` | 200 AuthResponse **or** MfaChallenge |
 | POST | `/auth/login/2fa` | `{mfa_token, code}` (TOTP 6 digits or recovery code) | 200 AuthResponse |
 | GET | `/auth/providers` | – | 200 `{"google": {"enabled": bool, "web_client_id": "..."}}` (public) |
-| POST | `/auth/google` | `{id_token}` (Google ID token) | 200 AuthResponse **or** MfaChallenge; 401 `invalid_token`; 404 `google_signin_disabled` |
+| POST | `/auth/google` | `{id_token}` (Google ID token) | 200 AuthResponse **or** MfaChallenge; 401 `invalid_token`; 404 `google_signin_disabled`; 409 `account_exists_sign_in_required` |
 | POST | `/auth/refresh` | `{refresh_token}` | 200 Tokens |
 | POST | `/auth/logout` | `{refresh_token}` | 204 |
 | POST | `/auth/verify-email` | `{token}` | 200 `{message}` |
@@ -78,8 +79,18 @@ Refresh token: random opaque string, stored hashed (SHA-256) in DB, rotated on e
 Login when `REQUIRE_EMAIL_VERIFICATION=true` and email unverified → 403 `email_not_verified`.
 Disabled user → 403 `account_disabled`.
 
-Google sign-in (`POST /auth/google`): matched by Google `sub`, else by case-insensitive email (the identity is linked and the
-email marked verified), else a new account is created with `has_password=false`. TOTP users get the same MfaChallenge and
+Registration (`POST /auth/register`) never reveals whether an address is taken: it answers `202 {message}` with the same
+body either way and returns no user. A new address gets the verification email; an existing one is left untouched and its
+owner is emailed an "you already have an account" notice with sign-in and reset-password links (throttled per address,
+shared with forgot-password). Clients should show the message ("check your email") and send the user to sign in. With
+`REQUIRE_EMAIL_VERIFICATION=false` a fresh account can sign in immediately, which the registrant (only) can tell apart.
+
+Google sign-in (`POST /auth/google`): matched by Google `sub`, else by case-insensitive email **only when Google is
+authoritative for that address** (`gmail.com`/`googlemail.com`, or the ID token's `hd` claim equals the email's domain):
+the identity is linked and the email marked verified (if the local account was unverified, its password, TOTP, recovery
+codes, passkeys and sessions are wiped first). For any other domain with an existing account the call fails with 409
+`account_exists_sign_in_required`: sign in with the password instead. If no account has that email, a new account is
+created with `has_password=false` (for every domain). TOTP users get the same MfaChallenge and
 finish via `/auth/login/2fa`. Password login and `/me/change-password` fail for accounts without a password (generic
 `invalid_credentials` / 409 `password_not_set`); such users set one through forgot/reset-password. `/me/2fa/totp/disable`
 takes `password` only when `has_password=true`.

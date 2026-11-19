@@ -14,6 +14,7 @@ import (
 // Audit actions.
 const (
 	AuditRegister         = "register"
+	AuditRegisterExisting = "register.existing_account"
 	AuditLoginSuccess     = "login.success"
 	AuditLoginFailure     = "login.failure"
 	AuditLogout           = "logout"
@@ -34,6 +35,8 @@ const (
 	AuditAdminSeedCreated = "admin.seeded"
 	AuditGoogleLogin      = "auth.google_login"
 	AuditIdentityLinked   = "auth.identity_linked"
+	AuditGoogleLinkDenied = "auth.google_link_denied"
+	AuditUnverifiedReset  = "auth.unverified_account_reset"
 )
 
 // RequestMeta is per-request context recorded in audit entries.

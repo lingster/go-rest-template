@@ -39,6 +39,8 @@ type GoogleClaims struct {
 	Email         string
 	EmailVerified bool
 	Name          string
+	// HostedDomain is the Google Workspace domain ("hd" claim); empty for consumer accounts.
+	HostedDomain string
 }
 
 // GoogleTokenVerifier verifies Google ID tokens. It is an interface so tests can inject a fake.
@@ -83,6 +85,7 @@ type googleIDClaims struct {
 	Email         string   `json:"email"`
 	EmailVerified flexBool `json:"email_verified"`
 	Name          string   `json:"name"`
+	HostedDomain  string   `json:"hd"`
 }
 
 // flexBool accepts JSON true/false as well as the strings "true"/"false" (Google has emitted both).
@@ -132,7 +135,8 @@ func (v *JWKSGoogleVerifier) Verify(ctx context.Context, idToken string) (*Googl
 	if claims.Subject == "" {
 		return nil, fmt.Errorf("%w: missing subject", ErrInvalidGoogleToken)
 	}
-	return &GoogleClaims{Subject: claims.Subject, Email: claims.Email, EmailVerified: bool(claims.EmailVerified), Name: claims.Name}, nil
+	return &GoogleClaims{Subject: claims.Subject, Email: claims.Email, EmailVerified: bool(claims.EmailVerified), Name: claims.Name,
+		HostedDomain: claims.HostedDomain}, nil
 }
 
 func (v *JWKSGoogleVerifier) audienceOK(aud jwt.ClaimStrings) bool {

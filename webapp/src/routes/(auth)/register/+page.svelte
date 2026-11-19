@@ -30,7 +30,7 @@
 		loading = true;
 		try {
 			const res = await authApi.register({ name: name.trim(), email: email.trim(), password });
-			done = res.message || 'Account created. Check your email to verify your address.';
+			done = res.message || 'Check your email to finish setting up your account.';
 		} catch (err) {
 			error = errorMessage(err);
 			errors = fieldErrors(err);

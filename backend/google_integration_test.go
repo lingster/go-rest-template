@@ -8,6 +8,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/lingster/go-rest-template/backend/container"
+	"github.com/lingster/go-rest-template/backend/models"
 	"github.com/lingster/go-rest-template/backend/services"
 	"github.com/lingster/go-rest-template/backend/testutil"
 )
@@ -23,6 +24,14 @@ func googleToken(email, name string) (token, sub string) {
 	sub = "sub-" + testutil.Email("g")
 	token = "tok-" + sub
 	googleFake.Add(token, services.GoogleClaims{Subject: sub, Email: email, EmailVerified: true, Name: name})
+	return token, sub
+}
+
+// googleTokenHD is like googleToken but the ID token also carries the Workspace hosted-domain claim.
+func googleTokenHD(email, name, hd string) (token, sub string) {
+	sub = "sub-" + testutil.Email("g")
+	token = "tok-" + sub
+	googleFake.Add(token, services.GoogleClaims{Subject: sub, Email: email, EmailVerified: true, Name: name, HostedDomain: hd})
 	return token, sub
 }
 
@@ -105,7 +114,7 @@ func TestGoogleNewUser(t *testing.T) {
 
 func TestGoogleLinkExistingVerifiedUser(t *testing.T) {
 	email, access, _ := newVerifiedUser(t, "glink")
-	tok, _ := googleToken(strings.ToUpper(email), "Other Name")
+	tok, _ := googleTokenHD(strings.ToUpper(email), "Other Name", "example.com")
 	r := googleLogin(t, tok)
 	expect(t, r, 200, "")
 	u := r.Body["user"].(map[string]interface{})
@@ -125,11 +134,125 @@ func TestGoogleLinkExistingVerifiedUser(t *testing.T) {
 
 func TestGoogleLinkUnverifiedAccountDropsAttackerCredentials(t *testing.T) {
 	email := testutil.Email("gpre")
-	// an attacker pre-registers the victim's address with a password they know
-	expect(t, call(t, "POST", "/api/v1/auth/register", map[string]string{"email": email, "password": password, "name": "Mallory"}, ""), 201, "")
-	tok, _ := googleToken(email, "Victim")
-	expect(t, googleLogin(t, tok), 200, "")
+	// an attacker pre-registers the victim's address with a password they know...
+	expect(t, call(t, "POST", "/api/v1/auth/register", map[string]string{"email": email, "password": password, "name": "Mallory"}, ""), 202, "")
+	c := container.Get()
+	u, err := c.Repos.Users.GetByEmail(email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ...and has planted a session, TOTP, recovery codes and a passkey
+	attackerAccess := issueSession(t, u)
+	u.TOTPEnabled, u.TOTPSecret = true, "attacker-secret"
+	if err := c.Repos.Users.Update(u, "TOTPEnabled", "TOTPSecret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Repos.Recovery.ReplaceForUser(u.ID, []*models.RecoveryCode{{ID: services.NewID(), UserID: u.ID, CodeHash: "h", CreatedAt: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Repos.Passkeys.Create(&models.WebAuthnCredential{ID: services.NewID(), UserID: u.ID, Name: "evil", CredentialID: "cred-" + u.ID, CredentialJSON: "{}", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	tok, _ := googleTokenHD(email, "Victim", "example.com")
+	r := googleLogin(t, tok)
+	expect(t, r, 200, "")
+	if r.Body["mfa_required"] != false || r.str("user", "id") != u.ID || r.Body["user"].(map[string]interface{})["email_verified"] != true {
+		t.Fatalf("victim should get a plain verified session: %s", r.Raw)
+	}
+
 	expect(t, call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, ""), 401, "invalid_credentials")
+	expect(t, call(t, "GET", "/api/v1/me", nil, attackerAccess), 401, "")
+	got, err := c.Repos.Users.GetByID(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TOTPEnabled || got.TOTPSecret != "" || got.HasPassword() || !got.EmailVerified {
+		t.Fatalf("attacker credentials survived: %+v", got)
+	}
+	if n, _ := c.Repos.Recovery.CountUnused(u.ID); n != 0 {
+		t.Fatalf("recovery codes survived: %d", n)
+	}
+	if n, _ := c.Repos.Passkeys.CountByUser(u.ID); n != 0 {
+		t.Fatalf("passkeys survived: %d", n)
+	}
+	acts := auditActions(t, u.ID)
+	if !contains(acts, services.AuditUnverifiedReset) || !contains(acts, services.AuditIdentityLinked) {
+		t.Fatalf("missing audit entries: %v", acts)
+	}
+}
+
+// issueSession mints an access token for u as a prior (attacker) session.
+func issueSession(t *testing.T, u *models.User) string {
+	t.Helper()
+	tokens, err := container.Get().Tokens.Issue(u, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tokens.AccessToken
+}
+
+func TestGoogleLinkOnlyWhenGoogleIsAuthoritativeForTheDomain(t *testing.T) {
+	cases := []struct {
+		name, domain, hd string
+		link             bool
+	}{
+		{"gmail without hd", "gmail.com", "", true},
+		{"googlemail without hd", "googlemail.com", "", true},
+		{"workspace hd matches domain", "corp-example.com", "corp-example.com", true},
+		{"workspace hd matches case-insensitively", "corp-example.com", "CORP-EXAMPLE.COM", true},
+		{"other domain without hd", "example.com", "", false},
+		{"hd of a different domain", "example.com", "evil.com", false},
+		{"hd is a parent domain only", "mail.corp-example.com", "corp-example.com", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			email := strings.Replace(testutil.Email("gauth"), "example.com", tc.domain, 1)
+			expect(t, call(t, "POST", "/api/v1/auth/register", map[string]string{"email": email, "password": password, "name": "Local"}, ""), 202, "")
+			expect(t, call(t, "POST", "/api/v1/auth/verify-email", map[string]string{"token": mailer.LastToken(email, "Verify")}, ""), 200, "")
+			tok, _ := googleTokenHD(email, "Google Name", tc.hd)
+			r := googleLogin(t, tok)
+			u, err := container.Get().Repos.Users.GetByEmail(email)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provs, _ := container.Get().Repos.Identities.ProvidersByUsers([]string{u.ID})
+			ids := provs[u.ID]
+			if tc.link {
+				expect(t, r, 200, "")
+				if len(ids) != 1 {
+					t.Fatalf("identity should be linked: %d", len(ids))
+				}
+				return
+			}
+			expect(t, r, 409, "account_exists_sign_in_required")
+			if !strings.Contains(r.str("error", "message"), "Sign in with your password") {
+				t.Fatalf("unhelpful message: %s", r.Raw)
+			}
+			if len(ids) != 0 {
+				t.Fatalf("identity must not be linked: %d", len(ids))
+			}
+			if !contains(auditActions(t, u.ID), services.AuditGoogleLinkDenied) {
+				t.Fatal("missing audit entry for the denied link")
+			}
+			// the account is untouched and still usable with its password
+			expect(t, call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, ""), 200, "")
+		})
+	}
+}
+
+func TestGoogleUnauthoritativeDomainStillCreatesNewAccountsAndMatchesBySub(t *testing.T) {
+	email := testutil.Email("gother") // example.com, no hd
+	tok, sub := googleToken(email, "Fresh")
+	first := googleLogin(t, tok)
+	expect(t, first, 200, "")
+	// once the identity exists, sign-in is by sub even though the domain is not authoritative
+	googleFake.Add("again-"+sub, services.GoogleClaims{Subject: sub, Email: email, EmailVerified: true})
+	second := googleLogin(t, "again-"+sub)
+	expect(t, second, 200, "")
+	if second.str("user", "id") != first.str("user", "id") {
+		t.Fatalf("expected same account: %s", second.Raw)
+	}
 }
 
 func TestGoogleLinkedLoginBySubIgnoresEmailChange(t *testing.T) {

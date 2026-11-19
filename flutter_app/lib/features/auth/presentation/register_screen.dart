@@ -41,19 +41,18 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen>
     if (!_formKey.currentState!.validate()) return;
     String? message;
     final ok = await runAction(() async {
-      final result = await ref
+      message = await ref
           .read(authRepositoryProvider)
           .register(
             email: _email.text.trim(),
             password: _password.text,
             name: _name.text.trim(),
           );
-      message = result.message;
     });
     if (ok && mounted) {
       setState(() {
         _successMessage = (message == null || message!.isEmpty)
-            ? 'Account created. Check your email to verify your address.'
+            ? 'Check your email to finish setting up your account.'
             : message;
       });
     }
