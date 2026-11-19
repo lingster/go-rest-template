@@ -153,7 +153,9 @@ forgot/reset, 2FA login, admin access control, CSP/CORS/swagger) against a temp 
 * **Sign in with Google** (`POST /auth/google`, `GET /auth/providers`): see "Google sign-in setup" in the root README. Tokens are
   verified in-process by `services.JWKSGoogleVerifier` (behind the `GoogleTokenVerifier` interface; tests inject
   `testutil.FakeGoogleVerifier`). Users are matched by Google `sub` (table `user_identities`, unique on provider+subject), then by
-  case-insensitive email (linked, email marked verified), else created with an empty password hash (`has_password=false`).
+  case-insensitive email only when Google is authoritative for the address (gmail.com/googlemail.com, or the token's `hd` equals the
+  email domain; linked, email marked verified; otherwise `409 account_exists_sign_in_required`), else created with an empty password
+  hash (`has_password=false`).
   An unverified local account that gets linked loses its password, TOTP, passkeys and sessions (pre-registration takeover
   defence). Google is only a first factor: TOTP users get the `mfa_required` challenge. Password-less accounts: password login
   fails with the generic `invalid_credentials`, `change-password` returns `409 password_not_set` (use forgot/reset-password),

@@ -79,7 +79,13 @@ func (s *AuthService) sendVerification(ctx context.Context, u *models.User) erro
 	return nil
 }
 
-// Register creates an account and sends the verification email.
+// registerAcceptedMessage is the one response to every registration attempt, so it cannot reveal
+// whether the address already has an account.
+const registerAcceptedMessage = "Check your email to finish setting up your account."
+
+// Register creates an account and sends the verification email. For an address that already has an
+// account nothing is changed: its owner is told by email instead. The response is identical either
+// way, and the password is hashed in both cases so timing does not differ either.
 func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) (*dto.RegisterResponse, error) {
 	hash, err := s.hasher.Hash(req.Password)
 	if err != nil {
@@ -90,24 +96,33 @@ func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) (*
 		ID: NewID(), Email: dto.NormalizeEmail(req.Email), Name: strings.TrimSpace(req.Name), PasswordHash: hash,
 		Role: models.RoleUser, IsActive: true, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.users.Create(u); errors.Is(err, repositories.ErrDuplicate) {
-		return nil, apperr.Conflict("An account with this email already exists")
-	} else if err != nil {
+	switch err := s.users.Create(u); {
+	case errors.Is(err, repositories.ErrDuplicate):
+		s.notifyExistingAccount(ctx, u.Email)
+	case err != nil:
 		return nil, err
+	default:
+		if err := s.sendVerification(ctx, u); err != nil {
+			return nil, err
+		}
+		s.audit.Log(ctx, AuditRegister, u.ID, u.ID, nil)
 	}
-	if err := s.sendVerification(ctx, u); err != nil {
-		return nil, err
-	}
-	s.audit.Log(ctx, AuditRegister, u.ID, u.ID, nil)
-	view, err := s.userSvc.Present(u)
+	return &dto.RegisterResponse{Message: registerAcceptedMessage}, nil
+}
+
+// notifyExistingAccount emails the owner of an address that someone tried to register again. It never
+// fails or reveals anything to the caller: lookup errors, disabled accounts and throttling are silent.
+func (s *AuthService) notifyExistingAccount(ctx context.Context, email string) {
+	u, err := s.users.GetByEmail(email)
 	if err != nil {
-		return nil, err
+		log.Printf("register: existing account lookup: %v", err)
+		return
 	}
-	msg := "Account created."
-	if s.cfg.RequireEmailVerification {
-		msg = "Account created. Please check your email to verify your address."
+	if !u.IsActive || !s.mailAllowed(u.Email) {
+		return
 	}
-	return &dto.RegisterResponse{User: view, Message: msg}, nil
+	s.sendMail(ctx, mail.AccountExists(u.Email, u.Name, s.cfg.FrontendURL+"/login", s.cfg.FrontendURL+"/forgot-password"))
+	s.audit.Log(ctx, AuditRegisterExisting, u.ID, "", nil)
 }
 
 // checkLoginAllowed enforces account state after credentials were proven.

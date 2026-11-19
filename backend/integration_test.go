@@ -103,7 +103,7 @@ func expect(t *testing.T, r resp, status int, code string) {
 func newVerifiedUser(t *testing.T, prefix string) (email, access, refresh string) {
 	t.Helper()
 	email = testutil.Email(prefix)
-	expect(t, call(t, "POST", "/api/v1/auth/register", map[string]string{"email": email, "password": password, "name": "Test"}, ""), 201, "")
+	expect(t, call(t, "POST", "/api/v1/auth/register", map[string]string{"email": email, "password": password, "name": "Test"}, ""), 202, "")
 	tok := mailer.LastToken(email, "Verify")
 	expect(t, call(t, "POST", "/api/v1/auth/verify-email", map[string]string{"token": tok}, ""), 200, "")
 	r := call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, "")
@@ -114,12 +114,10 @@ func newVerifiedUser(t *testing.T, prefix string) (email, access, refresh string
 func TestRegisterVerifyLoginRefreshLogout(t *testing.T) {
 	email := testutil.Email("flow")
 	r := call(t, "POST", "/api/v1/auth/register", map[string]string{"email": strings.ToUpper(email), "password": password, "name": "Ada"}, "")
-	expect(t, r, 201, "")
-	if r.str("user", "email") != email || r.str("user", "role") != "user" || r.str("message") == "" {
+	expect(t, r, 202, "")
+	if len(r.Body) != 1 || r.str("message") == "" {
 		t.Fatalf("bad register body: %s", r.Raw)
 	}
-	// duplicate
-	expect(t, call(t, "POST", "/api/v1/auth/register", map[string]string{"email": email, "password": password, "name": "x"}, ""), 409, "conflict")
 	// validation
 	v := call(t, "POST", "/api/v1/auth/register", map[string]string{"email": "nope", "password": "short", "name": ""}, "")
 	expect(t, v, 422, "validation_error")

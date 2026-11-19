@@ -63,9 +63,8 @@ export interface MessageResponse {
 	message: string;
 }
 
-export interface RegisterResponse extends MessageResponse {
-	user: User;
-}
+/** Identical for new and already-registered addresses (no account data, to prevent enumeration). */
+export type RegisterResponse = MessageResponse;
 
 export interface TotpSetup {
 	secret: string;

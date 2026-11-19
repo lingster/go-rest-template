@@ -29,7 +29,8 @@
 
 - The server verifies the Google ID token itself (RS256 signature against Google's JWKS, `iss`, `aud` in `GOOGLE_CLIENT_IDS`, `exp`/`iat` with 30s leeway, `email_verified`). Never trust a client-supplied email.
 - Google is a first factor only: accounts with TOTP receive the usual MFA challenge.
-- Linking by email is safe only because Google asserts the email is verified. If the local account was never verified, its password, TOTP, passkeys and sessions are wiped on link (prevents pre-registration account takeover).
+- Linking an existing local account by email requires that Google is **authoritative** for the address: a `gmail.com`/`googlemail.com` address, or an ID token whose `hd` (hosted domain) claim equals the address's domain. For other domains `email_verified` only says Google once verified the address (domains lapse and get re-registered), so the request fails with 409 `account_exists_sign_in_required` and is audited (`auth.google_link_denied`); the user signs in with their password instead. Matching by Google `sub`, and creating a brand-new account for an unused email, work for every domain.
+- When an authoritative link hits an account whose email was never verified locally (someone may have pre-registered the victim's address), Google counts as proof of ownership: the email is marked verified and the password, TOTP secret, recovery codes, passkeys and all sessions are wiped (audited as `auth.unverified_account_reset`). The owner sets a password through the reset flow if they want one. This prevents pre-registration account takeover.
 - Google-created accounts have no password (empty hash, never verifies). Password-requiring flows: login fails generically, change-password returns 409 `password_not_set` (use the e-mail reset flow, which proves mailbox control), TOTP disable needs only the TOTP/recovery code.
 - Webapp CSP must allow `accounts.google.com` (script/frame/connect/style) only when Google sign-in is enabled.
 
@@ -45,6 +46,19 @@
 - The limiters are in-memory and per-instance. Behind multiple instances, enforce limits at the edge (Cloudflare rules) or move the counters to a shared store (`ratelimit.Limiter` interface).
 - Password reset and resend-verification always respond 202 to avoid user enumeration. Mail is delivered by a background
   queue, so the response time does not reveal whether an email was sent.
+
+## Account enumeration
+
+- `POST /auth/register` answers `202 {message}` with an identical body whether or not the address is registered, and
+  returns no user object. A new address gets the verification email; an existing one is left unchanged and its owner is
+  emailed an "account already exists" notice (sign-in and reset links), throttled with the same per-address mail limit as
+  forgot-password and silently skipped when throttled. The password is hashed in both paths (the hash cost dominates)
+  and mail goes through the background queue, so neither status, body nor timing differs.
+- Resistance is complete only with `REQUIRE_EMAIL_VERIFICATION=true`. With it off, a fresh account can sign in at once,
+  so the registrant can tell "new" from "already exists" by trying to log in (their password only works on a new
+  account). That is visible to the person who submitted the form, not in the register response; keep verification on
+  if enumeration matters.
+- Login, forgot-password and passkey login already give the same answer for unknown and known accounts.
 
 ## Email
 
@@ -73,11 +87,6 @@
 
 ## Known trade-offs (not changed)
 
-- `POST /auth/register` returns 409 for an existing email, which reveals that the account exists. Removing it means
-  answering 201 for every request and emailing the owner instead; do that if enumeration matters for your product.
-- Linking a Google sign-in to an existing account trusts Google's `email_verified`. For addresses outside Gmail/Workspace
-  domains that is Google's verification at account creation; consider requiring the `hd` claim, or skipping auto-linking
-  for such addresses, if that matters to you.
 - The swagger UI at `/swagger/` is public. Put it behind auth or drop it from production builds if you do not want the API
   surface published.
 

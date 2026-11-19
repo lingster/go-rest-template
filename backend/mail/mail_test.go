@@ -110,3 +110,18 @@ func TestAsyncMailerNeverBlocksCaller(t *testing.T) {
 		t.Fatal("a full queue must drop instead of blocking")
 	}
 }
+
+func TestAccountExistsMailLinksAndEscapesName(t *testing.T) {
+	m := mail.AccountExists("a@example.com", `<b>Ada</b>`, "https://app.test/login", "https://app.test/forgot-password")
+	if m.To != "a@example.com" || m.Subject == "" {
+		t.Fatalf("bad message: %+v", m)
+	}
+	for _, link := range []string{"https://app.test/login", "https://app.test/forgot-password"} {
+		if !strings.Contains(m.Text, link) || !strings.Contains(m.HTML, link) {
+			t.Fatalf("missing %s", link)
+		}
+	}
+	if strings.Contains(m.HTML, "<b>Ada</b>") || !strings.Contains(m.HTML, "&lt;b&gt;Ada") {
+		t.Fatalf("name not escaped in HTML: %s", m.HTML)
+	}
+}

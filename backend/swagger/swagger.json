@@ -284,7 +284,7 @@
                 "tags": [
                     "auth"
                 ],
-                "description": "Verifies a Google ID token server-side. Creates the account, or links it to an existing account with the same Google-verified email. Returns an AuthResponse, or an MfaChallenge (mfa_required=true) when TOTP is enabled: Google never bypasses 2FA. Disabled (404 google_signin_disabled) unless GOOGLE_CLIENT_IDS is set.\n\u003cbr\u003e",
+                "description": "Verifies a Google ID token server-side. Creates the account, or links it to an existing account with the same email only when Google is authoritative for that address (gmail.com/googlemail.com, or the token's hosted domain claim equals the email domain); otherwise 409 account_exists_sign_in_required. Returns an AuthResponse, or an MfaChallenge (mfa_required=true) when TOTP is enabled: Google never bypasses 2FA. Disabled (404 google_signin_disabled) unless GOOGLE_CLIENT_IDS is set.\n\u003cbr\u003e",
                 "operationId": "AuthController.LoginGoogle",
                 "parameters": [
                     {
@@ -312,6 +312,9 @@
                     },
                     "404": {
                         "description": "google_signin_disabled"
+                    },
+                    "409": {
+                        "description": "account_exists_sign_in_required"
                     },
                     "429": {
                         "description": "rate_limited"
@@ -522,7 +525,7 @@
                 "tags": [
                     "auth"
                 ],
-                "description": "Create a new account. Sends a verification email.\n\u003cbr\u003e",
+                "description": "Create a new account and send a verification email. The response is the same whether or not the address is already registered (an existing owner is emailed instead), so it cannot be used to enumerate accounts.\n\u003cbr\u003e",
                 "operationId": "AuthController.Register",
                 "parameters": [
                     {
@@ -536,14 +539,11 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "202": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/dto.RegisterResponse"
                         }
-                    },
-                    "409": {
-                        "description": "conflict: email already registered"
                     },
                     "422": {
                         "description": "validation_error"
@@ -1315,10 +1315,8 @@
             "type": "object",
             "properties": {
                 "message": {
-                    "type": "string"
-                },
-                "user": {
-                    "$ref": "#/definitions/dto.User"
+                    "type": "string",
+                    "example": "Check your email to finish setting up your account."
                 }
             }
         },

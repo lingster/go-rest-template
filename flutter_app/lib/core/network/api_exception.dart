@@ -13,6 +13,7 @@ enum ApiErrorCode {
   invalidMfaCode('invalid_mfa_code'),
   notFound('not_found'),
   conflict('conflict'),
+  accountExistsSignInRequired('account_exists_sign_in_required'),
   rateLimited('rate_limited'),
   internalError('internal_error'),
 

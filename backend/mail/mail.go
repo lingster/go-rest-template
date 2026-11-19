@@ -236,3 +236,19 @@ func PasswordChanged(to, name string) Message {
 			"<p>If this was not you, reset your password immediately and contact support.</p></body></html>",
 	}
 }
+
+// AccountExists builds the notice sent when someone tries to register an address that already has an
+// account (instead of telling the requester). It links to sign in and to reset the password.
+func AccountExists(to, name, signInLink, resetLink string) Message {
+	const intro = "Someone just tried to create an account with this email address, but you already have one."
+	const outro = "If this was you, sign in, or reset your password if you have forgotten it. If it was not you, you can ignore this email: your account was not changed."
+	esc := htmltemplate.HTMLEscapeString
+	return Message{
+		To: to, Subject: "You already have an account",
+		Text: fmt.Sprintf("Hi %s,\n\n%s\n\nSign in: %s\nReset your password: %s\n\n%s\n", name, intro, signInLink, resetLink, outro),
+		HTML: "<!doctype html><html><body style=\"font-family:sans-serif;max-width:560px;margin:auto\"><h2>You already have an account</h2>" +
+			"<p>Hi " + esc(name) + ",</p><p>" + intro + "</p>" +
+			"<p><a href=\"" + esc(signInLink) + "\">Sign in</a> &middot; <a href=\"" + esc(resetLink) + "\">Reset your password</a></p>" +
+			"<p style=\"color:#666\">" + outro + "</p></body></html>",
+	}
+}
