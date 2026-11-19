@@ -56,11 +56,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-      - run: flutter pub get
+      - uses: ./.github/actions/setup-flutter # version from flutter_app/.flutter-version; runs pub get
       # NOTE: the APK uses default debug signing. To sign for real, store a
       # keystore as a secret, decode it here and reference it from
       # android/key.properties (see flutter_app/README.md).
