@@ -36,7 +36,7 @@ jobs:
     runs-on: ${{ fromJSON(vars.ANDROID_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || 'main' }}
       - uses: ./.github/actions/setup-fastlane
