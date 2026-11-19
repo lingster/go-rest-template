@@ -5,6 +5,9 @@ All three projects MUST follow this contract exactly. Base path: `/api/v1`. JSON
 ## Conventions
 
 - Auth header: `Authorization: Bearer <access_token>`.
+- Session transport: native clients (Flutter) get and send the refresh token in JSON bodies. Browser clients (the
+  webapp) send `X-Session-Transport: cookie` on every request with credentials included; the refresh token then lives
+  in an HttpOnly cookie (see "Cookie session transport" below) and is never in a body.
 - IDs are UUID strings. Timestamps are RFC3339 UTC strings.
 - Success responses return the resource JSON directly (no envelope).
 - Error responses: HTTP status + body
@@ -37,7 +40,7 @@ All three projects MUST follow this contract exactly. Base path: `/api/v1`. JSON
   "has_password": true, "identities": ["google"],   // has_password=false for Google-created accounts
   "created_at": "...", "updated_at": "..." }
 
-// Tokens
+// Tokens (refresh_token is omitted with X-Session-Transport: cookie)
 { "access_token": "jwt", "refresh_token": "opaque", "token_type": "Bearer", "expires_in": 900 }
 
 // AuthResponse (successful login)
@@ -67,14 +70,31 @@ Refresh token: random opaque string, stored hashed (SHA-256) in DB, rotated on e
 | POST | `/auth/login/2fa` | `{mfa_token, code}` (TOTP 6 digits or recovery code) | 200 AuthResponse |
 | GET | `/auth/providers` | – | 200 `{"google": {"enabled": bool, "web_client_id": "..."}}` (public) |
 | POST | `/auth/google` | `{id_token}` (Google ID token) | 200 AuthResponse **or** MfaChallenge; 401 `invalid_token`; 404 `google_signin_disabled`; 409 `account_exists_sign_in_required` |
-| POST | `/auth/refresh` | `{refresh_token}` | 200 Tokens |
-| POST | `/auth/logout` | `{refresh_token}` | 204 |
+| POST | `/auth/refresh` | `{refresh_token}`, or none with the cookie | 200 Tokens |
+| POST | `/auth/logout` | `{refresh_token}`, or none with the cookie | 204 (idempotent) |
 | POST | `/auth/verify-email` | `{token}` | 200 `{message}` |
 | POST | `/auth/resend-verification` | `{email}` | 202 `{message}` (always 202) |
 | POST | `/auth/forgot-password` | `{email}` | 202 `{message}` (always 202, no user enumeration) |
 | POST | `/auth/reset-password` | `{token, password}` | 200 `{message}` (signs out everywhere: refresh **and** access tokens) |
 | POST | `/auth/passkey/login/begin` | `{email?}` (accepted, ignored: always a discoverable ceremony, user verification required) | 200 `{session_id, options}` |
 | POST | `/auth/passkey/login/finish` | `{session_id, credential}` | 200 AuthResponse (passkey satisfies MFA) |
+
+### Cookie session transport (browsers)
+
+With the request header `X-Session-Transport: cookie`:
+- `/auth/login`, `/auth/login/2fa`, `/auth/google`, `/auth/passkey/login/finish` (when they return an AuthResponse) and
+  `/auth/refresh` set the refresh token as a cookie and omit `refresh_token` from the JSON. An MfaChallenge sets nothing.
+- Cookie: `__Secure-rt` (`rt` when the server runs with `COOKIE_SECURE=false`), `HttpOnly; Secure; SameSite=Strict;
+  Path=/api/v1/auth; Max-Age=<refresh TTL>`, host-only unless `COOKIE_DOMAIN` is set.
+- `/auth/refresh` and `/auth/logout` read the token from the cookie when the body has none. A body token wins (a client
+  can move a stored token into the cookie by sending it once with the header). Refresh rotates the cookie; a failed
+  refresh (4xx) clears it; logout always clears it. With the header but no cookie and no body: refresh → 401
+  `invalid_token`, logout → 204.
+- CSRF: a request authenticated by the cookie without the header, or with an `Origin` not explicitly listed in
+  `CORS_ALLOWED_ORIGINS`, → 403 `forbidden`. Without the header and without a body token or cookie → 422 as before.
+- CORS allows the `X-Session-Transport` header and sends `Access-Control-Allow-Credentials: true` to explicitly listed
+  origins only. The webapp and API must be same-site (e.g. `app.example.com` + `api.example.com`); otherwise route the
+  API through the webapp's origin, because browsers block third-party cookies.
 
 Login when `REQUIRE_EMAIL_VERIFICATION=true` and email unverified → 403 `email_not_verified`.
 Disabled user → 403 `account_disabled`.
@@ -146,7 +166,8 @@ Both the SvelteKit webapp and Flutter (go_router, web + deep links) implement th
 `APP_ENV` (dev|prod), `HTTP_PORT` (8080), `DB_DRIVER` (sqlite|postgres), `DATABASE_URL`
 (sqlite: `file:data/app.db`, postgres DSN), `JWT_SECRET`, `ACCESS_TOKEN_TTL` (15m), `REFRESH_TOKEN_TTL` (720h),
 `REQUIRE_EMAIL_VERIFICATION` (true), `MAIL_DRIVER` (console|smtp), `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
-`SMTP_PASSWORD`, `MAIL_FROM`, `FRONTEND_URL` (http://localhost:5173), `CORS_ALLOWED_ORIGINS` (comma list),
+`SMTP_PASSWORD`, `MAIL_FROM`, `FRONTEND_URL` (http://localhost:5173), `CORS_ALLOWED_ORIGINS` (comma list; `*` refused in
+prod), `COOKIE_SECURE` (true in prod), `COOKIE_DOMAIN` (empty = host-only),
 `WEBAUTHN_RP_ID` (localhost), `WEBAUTHN_RP_NAME`, `WEBAUTHN_RP_ORIGINS` (comma list),
 `ADMIN_EMAIL` / `ADMIN_PASSWORD` (seed an admin on first start if set),
 `GOOGLE_CLIENT_IDS` (comma list of web/iOS/Android OAuth client IDs, first = web; empty disables Google sign-in),

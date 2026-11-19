@@ -57,7 +57,7 @@ digest-pinned images, and Postgres sits on a network Mailpit cannot reach.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `APP_ENV` | `dev` | `prod` refuses to start with the default `JWT_SECRET` (or one shorter than 32 chars) or an example/short (<12) `ADMIN_PASSWORD`, logs warnings for risky settings, and enables HSTS |
+| `APP_ENV` | `dev` | `prod` refuses to start with the default `JWT_SECRET` (or one shorter than 32 chars), an example/short (<12) `ADMIN_PASSWORD` or `CORS_ALLOWED_ORIGINS=*`, logs warnings for risky settings, and enables HSTS |
 | `HTTP_PORT` | `8080` | |
 | `DB_DRIVER` | `sqlite` | `sqlite` or `postgres` |
 | `DATABASE_URL` | `file:data/app.db` | sqlite file DSN or Postgres DSN |
@@ -72,7 +72,9 @@ digest-pinned images, and Postgres sits on a network Mailpit cannot reach.
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | empty | auth only when username is set |
 | `MAIL_FROM` | `App <no-reply@example.com>` | |
 | `FRONTEND_URL` | `http://localhost:5173` | base of the verify/reset links |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | comma list (`*` allowed) |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | comma list. Listed origins may send credentials (the webapp's refresh cookie) and pass its CSRF origin check. `*` allows bearer-only requests from anywhere (never with credentials) and is refused in prod |
+| `COOKIE_SECURE` | `true` in prod, else `false` | webapp refresh cookie is `Secure` and named `__Secure-rt` (else `rt`); `false` only for plain-HTTP dev (warned in prod) |
+| `COOKIE_DOMAIN` | empty (host-only) | refresh cookie `Domain`; set a parent domain (`example.com`) only if browsers reach the API on several sibling hosts. The webapp and API must be same-site either way (see `docs/SECURITY.md`) |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` | `localhost` / `Go REST Template` | |
 | `WEBAUTHN_RP_ORIGINS` | `http://localhost:5173` | comma list |
 | `GOOGLE_CLIENT_IDS` | empty | comma list of Google OAuth client IDs (first = web). Empty disables Sign in with Google (`POST /auth/google` -> 404 `google_signin_disabled`) |
@@ -135,6 +137,9 @@ forgot/reset, 2FA login, admin access control, CSP/CORS/swagger) against a temp 
 
 * Strict CSP with per-request nonce on non-API responses; JSON API responses use `default-src 'none'`.
 * Refresh tokens and one-time tokens are stored as SHA-256 hashes; reuse of a rotated refresh token revokes its family.
+* Browser clients send `X-Session-Transport: cookie` and get the refresh token as an HttpOnly, `SameSite=Strict` cookie
+  scoped to `/api/v1/auth` instead of in JSON; cookie-authenticated refresh/logout require that header and an allow-listed
+  `Origin` (CSRF). Native clients keep body tokens. Helper: `httpx/session.go`; see `docs/API_CONTRACT.md`.
 * WebAuthn ceremony sessions live in memory (`services.SessionStore`); use a shared store for multi-instance deployments.
 * Rate limiter is in-memory per instance. Schema is created with `orm.RunSyncdb` (creates missing tables, does not alter
   existing ones) - add real migrations before changing models in production.

@@ -18,7 +18,7 @@ const user: User = {
 	created_at: '',
 	updated_at: ''
 };
-const tokens = { access_token: 'a', refresh_token: 'r2', token_type: 'Bearer', expires_in: 900 };
+const tokens = { access_token: 'a', token_type: 'Bearer', expires_in: 900 };
 const authResponse: AuthResponse = { mfa_required: false, tokens, user };
 
 function memoryStorage() {
@@ -26,7 +26,10 @@ function memoryStorage() {
 	return {
 		getItem: (k: string) => m.get(k) ?? null,
 		setItem: (k: string, v: string) => void m.set(k, v),
-		removeItem: (k: string) => void m.delete(k)
+		removeItem: (k: string) => void m.delete(k),
+		get length() {
+			return m.size;
+		}
 	};
 }
 
@@ -35,22 +38,29 @@ async function load() {
 	const authApi = await import('../api/auth.ts');
 	const meApi = await import('../api/me.ts');
 	const mod = await import('./session.svelte.ts');
-	return { authApi, meApi, ...mod };
+	const { api } = await import('../api/http.ts');
+	return { authApi, meApi, api, ...mod };
 }
 
 describe('session store', () => {
 	beforeEach(() => {
+		vi.resetAllMocks();
+		vi.unstubAllGlobals();
 		vi.stubGlobal('localStorage', memoryStorage());
 	});
 
-	it('signIn stores user and persists only the refresh token', async () => {
-		const { session, REFRESH_TOKEN_KEY } = await load();
+	it('signIn keeps the access token in memory and persists nothing', async () => {
+		const { session, api } = await load();
+		const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+		vi.stubGlobal('fetch', fetchMock);
 		expect(session.isAuthenticated).toBe(false);
 		session.signIn(authResponse);
 		expect(session.user).toEqual(user);
 		expect(session.isAuthenticated).toBe(true);
 		expect(session.isAdmin).toBe(false);
-		expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('r2');
+		expect(localStorage.length).toBe(0);
+		await api.request('/me');
+		expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer a');
 	});
 
 	it('isAdmin reflects role', async () => {
@@ -59,43 +69,63 @@ describe('session store', () => {
 		expect(session.isAdmin).toBe(true);
 	});
 
-	it('init without stored token just becomes ready', async () => {
-		const { session, authApi } = await load();
-		await session.init();
-		expect(session.ready).toBe(true);
-		expect(session.user).toBeNull();
-		expect(authApi.refresh).not.toHaveBeenCalled();
-	});
-
-	it('init restores session from stored refresh token', async () => {
-		const { session, authApi, meApi, REFRESH_TOKEN_KEY } = await load();
-		localStorage.setItem(REFRESH_TOKEN_KEY, 'r1');
+	it('init restores the session from the refresh cookie', async () => {
+		const { session, authApi, meApi } = await load();
 		vi.mocked(authApi.refresh).mockResolvedValue(tokens);
 		vi.mocked(meApi.getMe).mockResolvedValue(user);
 		await Promise.all([session.init(), session.init()]);
 		expect(authApi.refresh).toHaveBeenCalledTimes(1);
-		expect(authApi.refresh).toHaveBeenCalledWith('r1');
+		expect(authApi.refresh).toHaveBeenCalledWith(undefined);
+		expect(session.ready).toBe(true);
 		expect(session.user).toEqual(user);
-		expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('r2');
 	});
 
-	it('init clears state when restore fails', async () => {
-		const { session, authApi, REFRESH_TOKEN_KEY } = await load();
-		localStorage.setItem(REFRESH_TOKEN_KEY, 'bad');
-		vi.mocked(authApi.refresh).mockRejectedValue(new Error('nope'));
+	it('init treats a rejected cookie refresh as signed out', async () => {
+		const { session, authApi, meApi } = await load();
+		vi.mocked(authApi.refresh).mockRejectedValue(new Error('no session'));
 		await session.init();
 		expect(session.ready).toBe(true);
 		expect(session.user).toBeNull();
-		expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
+		expect(meApi.getMe).not.toHaveBeenCalled();
 	});
 
-	it('signOut clears locally and revokes the refresh token', async () => {
-		const { session, authApi, REFRESH_TOKEN_KEY } = await load();
+	it('init migrates a legacy localStorage refresh token once, then deletes it', async () => {
+		const { session, authApi, meApi, LEGACY_REFRESH_TOKEN_KEY } = await load();
+		localStorage.setItem(LEGACY_REFRESH_TOKEN_KEY, 'r1');
+		vi.mocked(authApi.refresh).mockResolvedValue(tokens);
+		vi.mocked(meApi.getMe).mockResolvedValue(user);
+		await session.init();
+		expect(authApi.refresh).toHaveBeenCalledWith('r1');
+		expect(session.user).toEqual(user);
+		expect(localStorage.getItem(LEGACY_REFRESH_TOKEN_KEY)).toBeNull();
+	});
+
+	it('init deletes the legacy token even when it is rejected', async () => {
+		const { session, authApi, LEGACY_REFRESH_TOKEN_KEY } = await load();
+		localStorage.setItem(LEGACY_REFRESH_TOKEN_KEY, 'bad');
+		vi.mocked(authApi.refresh).mockRejectedValue(new Error('nope'));
+		await session.init();
+		expect(session.user).toBeNull();
+		expect(localStorage.getItem(LEGACY_REFRESH_TOKEN_KEY)).toBeNull();
+	});
+
+	it('a sign-in that finishes during the restore is kept', async () => {
+		const { session, authApi } = await load();
+		let reject!: (e: Error) => void;
+		vi.mocked(authApi.refresh).mockReturnValue(new Promise((_, r) => (reject = r)));
+		const init = session.init();
+		session.signIn(authResponse);
+		reject(new Error('no session'));
+		await init;
+		expect(session.user).toEqual(user);
+	});
+
+	it('signOut clears locally and revokes the cookie session', async () => {
+		const { session, authApi } = await load();
 		vi.mocked(authApi.logout).mockResolvedValue(undefined);
 		session.signIn(authResponse);
 		await session.signOut();
 		expect(session.user).toBeNull();
-		expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
-		expect(authApi.logout).toHaveBeenCalledWith('r2');
+		expect(authApi.logout).toHaveBeenCalledWith();
 	});
 });

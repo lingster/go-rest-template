@@ -109,28 +109,28 @@ func SecurityHeaders(cfg *config.Config) Middleware {
 	}
 }
 
-// CORS implements an allow-list based CORS policy (bearer tokens; no cookies, so no credentials).
+// CORS implements an allow-list based CORS policy. Explicitly listed origins may send credentials
+// (the webapp's refresh cookie); "*" allows bearer-only requests from any origin, never with credentials.
 func CORS(allowed []string) Middleware {
-	set := make(map[string]bool, len(allowed))
-	for _, o := range allowed {
-		set[strings.TrimRight(o, "/")] = true
-	}
+	origins := httpx.NewOrigins(allowed)
+	allowHeaders := "Authorization, Content-Type, " + httpx.SessionTransportHeader
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 			if origin != "" {
 				w.Header().Add("Vary", "Origin")
-				if set["*"] || set[origin] {
+				if explicit := origins.Explicit(origin); explicit || origins.Wildcard() {
 					h := w.Header()
-					if set["*"] {
-						h.Set("Access-Control-Allow-Origin", "*")
-					} else {
+					if explicit {
 						h.Set("Access-Control-Allow-Origin", origin)
+						h.Set("Access-Control-Allow-Credentials", "true")
+					} else {
+						h.Set("Access-Control-Allow-Origin", "*")
 					}
 					h.Set("Access-Control-Expose-Headers", "Retry-After")
 					if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 						h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
-						h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+						h.Set("Access-Control-Allow-Headers", allowHeaders)
 						h.Set("Access-Control-Max-Age", "600")
 						w.WriteHeader(http.StatusNoContent)
 						return

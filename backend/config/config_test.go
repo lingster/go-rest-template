@@ -9,7 +9,7 @@ import (
 
 func prod() *config.Config {
 	return &config.Config{AppEnv: "prod", DBDriver: "postgres", MailDriver: "smtp", SMTPRequireTLS: true,
-		JWTSecret: strings.Repeat("s", 40)}
+		JWTSecret: strings.Repeat("s", 40), CookieSecure: true}
 }
 
 func TestProdRejectsWeakAdminPassword(t *testing.T) {
@@ -72,10 +72,30 @@ func TestProdWarnsWhenSwaggerEnabled(t *testing.T) {
 	}
 }
 
+func TestProdRejectsWildcardCORS(t *testing.T) {
+	c := prod()
+	c.CORSAllowedOrigins = []string{"https://app.example.com", "*"}
+	if err := c.Validate(); err == nil {
+		t.Error("CORS_ALLOWED_ORIGINS=* must be rejected in prod")
+	}
+	c.CORSAllowedOrigins = []string{"https://app.example.com"}
+	if err := c.Validate(); err != nil {
+		t.Errorf("explicit origins rejected: %v", err)
+	}
+	c.AppEnv = "dev"
+	c.CORSAllowedOrigins = []string{"*"}
+	if err := c.Validate(); err != nil {
+		t.Errorf("dev may use *: %v", err)
+	}
+}
+
 func TestProdWarnings(t *testing.T) {
 	c := prod()
+	if w := c.Warnings(); len(w) != 0 {
+		t.Fatalf("safe prod config must not warn: %v", w)
+	}
 	c.MailDriver = "console"
-	c.CORSAllowedOrigins = []string{"*"}
+	c.CookieSecure = false
 	c.WebAuthnRPOrigins = []string{"http://app.example.com"}
 	if w := c.Warnings(); len(w) != 3 {
 		t.Fatalf("expected 3 warnings, got %v", w)

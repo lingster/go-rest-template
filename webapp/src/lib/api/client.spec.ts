@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, createApiClient, type AuthHooks } from './client.ts';
+import { ApiError, createApiClient, SESSION_TRANSPORT_HEADER, type AuthHooks } from './client.ts';
 import type { Tokens } from './types.ts';
 
 const json = (status: number, body?: unknown) =>
@@ -14,19 +14,16 @@ const errBody = (code: string, message = 'msg', details?: Record<string, string>
 
 const newTokens: Tokens = {
 	access_token: 'new-access',
-	refresh_token: 'new-refresh',
 	token_type: 'Bearer',
 	expires_in: 900
 };
 
 function setup(fetchImpl: ReturnType<typeof vi.fn>) {
-	const state = { access: 'old-access', refresh: 'old-refresh' as string | null };
+	const state = { access: 'old-access' };
 	const hooks: AuthHooks = {
 		getAccessToken: () => state.access,
-		getRefreshToken: () => state.refresh,
 		onTokens: vi.fn((t: Tokens) => {
 			state.access = t.access_token;
-			state.refresh = t.refresh_token;
 		}),
 		onAuthFailure: vi.fn()
 	};
@@ -86,6 +83,15 @@ describe('api client', () => {
 		expect(init.body).toBe('{"a":1}');
 	});
 
+	it('opts every request into the cookie session transport', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(json(200, {}));
+		const { client } = setup(fetchMock);
+		await client.request('/auth/login', { method: 'POST', body: {}, auth: false });
+		const [, init] = fetchMock.mock.calls[0];
+		expect(init.headers[SESSION_TRANSPORT_HEADER]).toBe('cookie');
+		expect(init.credentials).toBe('include');
+	});
+
 	it('does not attach bearer when auth is false', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(json(200, {}));
 		const { client } = setup(fetchMock);
@@ -103,8 +109,13 @@ describe('api client', () => {
 		const res = await client.request<{ id: string }>('/me');
 		expect(res.id).toBe('u1');
 		expect(fetchMock).toHaveBeenCalledTimes(3);
-		expect(fetchMock.mock.calls[1][0]).toBe('http://api.test/api/v1/auth/refresh');
-		expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ refresh_token: 'old-refresh' });
+		const [refreshUrl, refreshInit] = fetchMock.mock.calls[1];
+		expect(refreshUrl).toBe('http://api.test/api/v1/auth/refresh');
+		// the refresh token is the HttpOnly cookie: no body, no bearer
+		expect(refreshInit.body).toBeUndefined();
+		expect(refreshInit.headers.Authorization).toBeUndefined();
+		expect(refreshInit.headers[SESSION_TRANSPORT_HEADER]).toBe('cookie');
+		expect(refreshInit.credentials).toBe('include');
 		expect(fetchMock.mock.calls[2][1].headers.Authorization).toBe('Bearer new-access');
 		expect(hooks.onTokens).toHaveBeenCalledWith(newTokens);
 		expect(hooks.onAuthFailure).not.toHaveBeenCalled();
@@ -133,7 +144,7 @@ describe('api client', () => {
 		expect(refreshCalls).toBe(1);
 	});
 
-	it('logs out when refresh fails', async () => {
+	it('logs out when the cookie refresh is rejected (no or revoked session)', async () => {
 		const fetchMock = vi
 			.fn()
 			.mockResolvedValueOnce(json(401, errBody('unauthorized')))
@@ -143,15 +154,6 @@ describe('api client', () => {
 		expect(err).toBeInstanceOf(ApiError);
 		expect(err.code).toBe('invalid_token');
 		expect(hooks.onAuthFailure).toHaveBeenCalledTimes(1);
-	});
-
-	it('logs out when there is no refresh token', async () => {
-		const fetchMock = vi.fn().mockResolvedValueOnce(json(401, errBody('unauthorized')));
-		const { client, hooks, state } = setup(fetchMock);
-		state.refresh = null;
-		await expect(client.request<ApiError>('/me')).rejects.toBeInstanceOf(ApiError);
-		expect(hooks.onAuthFailure).toHaveBeenCalledTimes(1);
-		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('does not refresh on invalid_credentials and does not loop after a retry', async () => {

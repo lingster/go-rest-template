@@ -185,6 +185,11 @@ paths:
         <br>
       operationId: AuthController.LoginGoogle
       parameters:
+      - in: header
+        name: X-Session-Transport
+        description: 'cookie: set the refresh token as an HttpOnly cookie and omit
+          it from the body'
+        type: string
       - in: body
         name: body
         description: Google ID token
@@ -215,6 +220,11 @@ paths:
         <br>
       operationId: AuthController.Login
       parameters:
+      - in: header
+        name: X-Session-Transport
+        description: 'cookie: set the refresh token as an HttpOnly cookie and omit
+          it from the body'
+        type: string
       - in: body
         name: body
         description: Credentials
@@ -241,6 +251,11 @@ paths:
         <br>
       operationId: AuthController.LoginMFA
       parameters:
+      - in: header
+        name: X-Session-Transport
+        description: 'cookie: set the refresh token as an HttpOnly cookie and omit
+          it from the body'
+        type: string
       - in: body
         name: body
         description: MFA token and code
@@ -258,17 +273,28 @@ paths:
     post:
       tags:
       - auth
+      description: |-
+        Idempotent. With X-Session-Transport: cookie the refresh cookie is revoked (when no body token is given) and cleared.
+        <br>
       operationId: AuthController.Logout
       parameters:
+      - in: header
+        name: X-Session-Transport
+        description: 'cookie: revoke and clear the HttpOnly refresh cookie'
+        type: string
       - in: body
         name: body
-        description: Refresh token to revoke
-        required: true
+        description: Refresh token to revoke (omit when using the cookie)
         schema:
           $ref: '#/definitions/dto.RefreshRequest'
       responses:
         "204":
           description: no content
+        "403":
+          description: 'forbidden: cookie request without X-Session-Transport or from
+            a disallowed Origin'
+        "422":
+          description: 'validation_error: no refresh token in the body or cookie'
   /auth/passkey/login/begin:
     post:
       tags:
@@ -297,6 +323,11 @@ paths:
         <br>
       operationId: AuthController.PasskeyLoginFinish
       parameters:
+      - in: header
+        name: X-Session-Transport
+        description: 'cookie: set the refresh token as an HttpOnly cookie and omit
+          it from the body'
+        type: string
       - in: body
         name: body
         description: Session and credential
@@ -328,14 +359,18 @@ paths:
       tags:
       - auth
       description: |-
-        Rotating refresh; re-using a revoked token revokes the whole token family.
+        Rotating refresh; re-using a revoked token revokes the whole token family. Webapp clients send X-Session-Transport: cookie and no body: the token is read from, and the rotated one written to, the HttpOnly refresh cookie (a failed refresh clears it).
         <br>
       operationId: AuthController.Refresh
       parameters:
+      - in: header
+        name: X-Session-Transport
+        description: 'cookie: refresh token travels in the HttpOnly cookie instead
+          of the body'
+        type: string
       - in: body
         name: body
-        description: Refresh token
-        required: true
+        description: Refresh token (omit when using the cookie)
         schema:
           $ref: '#/definitions/dto.RefreshRequest'
       responses:
@@ -345,6 +380,11 @@ paths:
             $ref: '#/definitions/dto.Tokens'
         "401":
           description: invalid_token or token_expired
+        "403":
+          description: 'forbidden: cookie request without X-Session-Transport or from
+            a disallowed Origin'
+        "422":
+          description: 'validation_error: no refresh token in the body or cookie'
   /auth/register:
     post:
       tags:
@@ -841,11 +881,11 @@ definitions:
           type: string
   dto.RefreshRequest:
     title: RefreshRequest
-    required:
-    - refresh_token
     type: object
     properties:
       refresh_token:
+        description: 'Required unless the refresh cookie is sent (X-Session-Transport:
+          cookie)'
         type: string
   dto.RegisterRequest:
     title: RegisterRequest
@@ -926,7 +966,8 @@ definitions:
         example: 900
         format: int64
       refresh_token:
-        description: Opaque rotating refresh token
+        description: 'Opaque rotating refresh token; omitted (sent as an HttpOnly
+          cookie) when the request has X-Session-Transport: cookie'
         type: string
       token_type:
         type: string

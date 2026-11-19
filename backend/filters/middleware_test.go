@@ -39,6 +39,26 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}
 }
 
+func TestCORSWildcardNeverAllowsCredentials(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := filters.CORS([]string{"*", "https://app.example.com"})(ok)
+	hit := func(origin string) http.Header {
+		req := httptest.NewRequest("GET", "/api/v1/me", nil)
+		req.Header.Set("Origin", origin)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Header()
+	}
+	if got := hit("https://other.example"); got.Get("Access-Control-Allow-Origin") != "*" ||
+		got.Get("Access-Control-Allow-Credentials") != "" {
+		t.Fatalf("wildcard origin: %v", got)
+	}
+	if got := hit("https://app.example.com"); got.Get("Access-Control-Allow-Origin") != "https://app.example.com" ||
+		got.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("explicit origin: %v", got)
+	}
+}
+
 func TestRecoverMiddleware(t *testing.T) {
 	h := filters.Recover()(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }))
 	rec := httptest.NewRecorder()

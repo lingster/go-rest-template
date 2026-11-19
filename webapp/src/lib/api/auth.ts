@@ -21,9 +21,18 @@ export const login = (body: { email: string; password: string }) =>
 export const login2fa = (body: { mfa_token: string; code: string }) =>
 	post<AuthResponse>('/auth/login/2fa', body);
 
-export const refresh = (refresh_token: string) => post<Tokens>('/auth/refresh', { refresh_token });
+/**
+ * Uses the HttpOnly refresh cookie. `legacyRefreshToken` is only sent once, to move a session stored
+ * by an older build into the cookie.
+ */
+export const refresh = (legacyRefreshToken?: string) =>
+	post<Tokens>(
+		'/auth/refresh',
+		legacyRefreshToken ? { refresh_token: legacyRefreshToken } : undefined
+	);
 
-export const logout = (refresh_token: string) => post<void>('/auth/logout', { refresh_token });
+/** Revokes the refresh cookie's session and clears the cookie. */
+export const logout = () => post<void>('/auth/logout');
 
 export const verifyEmail = (token: string) =>
 	post<MessageResponse>('/auth/verify-email', { token });
