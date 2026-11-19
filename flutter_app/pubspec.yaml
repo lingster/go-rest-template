@@ -40,7 +40,7 @@ dependencies:
   go_router: ^18.1.2
   dio: ^5.11.1
   flutter_secure_storage: ^11.2.0
-  passkeys: ^2.23.1
+  passkeys: ^2.24.2
   qr_flutter: ^4.1.0
   local_auth: ^3.0.2
   google_sign_in: ^7.2.0
