@@ -52,8 +52,9 @@ func (f *FakeGoogleVerifier) Verify(_ context.Context, token string) (*services.
 func Config() *config.Config {
 	return &config.Config{
 		AppEnv: "test", HTTPPort: 0, DBDriver: "sqlite", JWTSecret: "test-secret-test-secret-test-secret-0123",
-		AccessTokenTTL: 15 * time.Minute, RefreshTokenTTL: 720 * time.Hour, RequireEmailVerification: true,
-		MailDriver: "console", FrontendURL: "http://localhost:5173",
+		AccessTokenTTL: 15 * time.Minute, RefreshTokenTTL: 720 * time.Hour, ReauthMaxAge: 10 * time.Minute,
+		RequireEmailVerification: true,
+		MailDriver:               "console", FrontendURL: "http://localhost:5173",
 		CORSAllowedOrigins: []string{"http://localhost:5173"},
 		WebAuthnRPID:       "localhost", WebAuthnRPName: "Test", WebAuthnRPOrigins: []string{"http://localhost:5173"},
 		RateLimitPerMinute: 100000, BcryptCost: 4,

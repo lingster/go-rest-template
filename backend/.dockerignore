@@ -1,5 +1,16 @@
+# Keep the build context minimal: no local state, secrets or VCS metadata in the image layers.
 bin/
 data/
+.git
 .env
+.env.*
+!.env.example
 *.db
 *.db-*
+*.pem
+*.key
+*.p12
+**/*_test.go
+testutil/
+Dockerfile
+.dockerignore

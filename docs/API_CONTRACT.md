@@ -14,7 +14,10 @@ All three projects MUST follow this contract exactly. Base path: `/api/v1`. JSON
   `details` is optional (used for `validation_error`).
 - Error codes: `validation_error`(422), `invalid_credentials`(401), `unauthorized`(401), `invalid_token`(400/401),
   `token_expired`(401), `email_not_verified`(403), `account_disabled`(403), `forbidden`(403),
-  `invalid_mfa_code`(401), `not_found`(404), `conflict`(409), `rate_limited`(429), `internal_error`(500).
+  `invalid_mfa_code`(401), `not_found`(404), `conflict`(409), `rate_limited`(429), `internal_error`(500),
+  `reauthentication_required`(403: the operation needs a recent sign-in; sign in again and retry).
+- `rate_limited` is also returned per **account** (from any IP) after 10 second-factor or current-password attempts
+  in 15 minutes (`/auth/login/2fa`, `/me/2fa/*`, `/me/change-password`).
 - Password policy: min 8 chars, max 128.
 
 ## Objects
@@ -61,8 +64,8 @@ Refresh token: random opaque string, stored hashed (SHA-256) in DB, rotated on e
 | POST | `/auth/verify-email` | `{token}` | 200 `{message}` |
 | POST | `/auth/resend-verification` | `{email}` | 202 `{message}` (always 202) |
 | POST | `/auth/forgot-password` | `{email}` | 202 `{message}` (always 202, no user enumeration) |
-| POST | `/auth/reset-password` | `{token, password}` | 200 `{message}` (revokes all refresh tokens) |
-| POST | `/auth/passkey/login/begin` | `{email?}` (omit for discoverable credential) | 200 `{session_id, options}` |
+| POST | `/auth/reset-password` | `{token, password}` | 200 `{message}` (signs out everywhere: refresh **and** access tokens) |
+| POST | `/auth/passkey/login/begin` | `{email?}` (accepted, ignored: always a discoverable ceremony, user verification required) | 200 `{session_id, options}` |
 | POST | `/auth/passkey/login/finish` | `{session_id, credential}` | 200 AuthResponse (passkey satisfies MFA) |
 
 Login when `REQUIRE_EMAIL_VERIFICATION=true` and email unverified → 403 `email_not_verified`.
@@ -80,13 +83,13 @@ takes `password` only when `has_password=true`.
 |---|---|---|---|
 | GET | `/me` | – | User |
 | PATCH | `/me` | `{name}` | User |
-| POST | `/me/change-password` | `{current_password, new_password}` | 200 `{message}` |
-| POST | `/me/2fa/totp/setup` | – | `{secret, otpauth_url}` (pending until enabled) |
+| POST | `/me/change-password` | `{current_password, new_password}` | 200 `{message}` (signs out everywhere, including this session) |
+| POST | `/me/2fa/totp/setup` | – | `{secret, otpauth_url}` (pending until enabled; needs a recent sign-in) |
 | POST | `/me/2fa/totp/enable` | `{code}` | `{recovery_codes: [10 strings]}` |
 | POST | `/me/2fa/totp/disable` | `{password, code}` | 200 `{message}` |
 | POST | `/me/2fa/recovery-codes` | `{code}` | `{recovery_codes: [...]}` (regenerate) |
 | GET | `/me/passkeys` | – | `[Passkey]` |
-| POST | `/me/passkeys/register/begin` | – | `{session_id, options}` |
+| POST | `/me/passkeys/register/begin` | – | `{session_id, options}` (needs a recent sign-in) |
 | POST | `/me/passkeys/register/finish` | `{session_id, name, credential}` | 201 Passkey |
 | DELETE | `/me/passkeys/:id` | – | 204 |
 
@@ -99,7 +102,11 @@ takes `password` only when `has_password=true`.
 | GET | `/admin/users/:id` | – | User |
 | PATCH | `/admin/users/:id` | `{name?, role?, is_active?, email_verified?}` | User |
 | DELETE | `/admin/users/:id` | – | 204 (cannot delete self) |
-| POST | `/admin/users/:id/revoke-sessions` | – | 204 |
+| POST | `/admin/users/:id/revoke-sessions` | – | 204 (refresh and access tokens stop working at once) |
+
+Sessions: access tokens carry the user's session version; password change/reset, revoke-sessions and deactivation
+bump it, so outstanding access tokens get 401 `unauthorized` immediately (clients then try to refresh, which also fails).
+"Recent sign-in" means a password/Google/passkey login within `REAUTH_MAX_AGE` (10 min); refreshing does not renew it.
 | GET | `/admin/audit-logs` | `?page&per_page&user_id=` | Paginated<`{id, user_id, actor_id, action, ip, user_agent, metadata, created_at}`> |
 
 ## WebAuthn / passkeys
@@ -124,7 +131,8 @@ Both the SvelteKit webapp and Flutter (go_router, web + deep links) implement th
 `SMTP_PASSWORD`, `MAIL_FROM`, `FRONTEND_URL` (http://localhost:5173), `CORS_ALLOWED_ORIGINS` (comma list),
 `WEBAUTHN_RP_ID` (localhost), `WEBAUTHN_RP_NAME`, `WEBAUTHN_RP_ORIGINS` (comma list),
 `ADMIN_EMAIL` / `ADMIN_PASSWORD` (seed an admin on first start if set),
-`GOOGLE_CLIENT_IDS` (comma list of web/iOS/Android OAuth client IDs, first = web; empty disables Google sign-in).
+`GOOGLE_CLIENT_IDS` (comma list of web/iOS/Android OAuth client IDs, first = web; empty disables Google sign-in),
+`REAUTH_MAX_AGE` (10m), `SMTP_REQUIRE_TLS` (true in prod).
 
 ## Repository layout
 

@@ -15,6 +15,9 @@ import (
 // CurrentUserKey is the ctx.Input data key under which the authenticated *models.User is stored.
 const CurrentUserKey = "current_user"
 
+// ClaimsKey is the ctx.Input data key under which the verified access token *services.Claims are stored.
+const ClaimsKey = "access_claims"
+
 // Authenticate is a Beego filter requiring a valid Bearer access token of an active user.
 // The user is loaded from the DB so role/active changes apply immediately.
 func Authenticate(ctx *context.Context) {
@@ -41,7 +44,12 @@ func Authenticate(ctx *context.Context) {
 		httpx.WriteError(ctx.ResponseWriter, apperr.AccountDisabled())
 		return
 	}
+	if claims.Ver != u.TokenVersion { // signed out everywhere since this token was issued
+		httpx.WriteError(ctx.ResponseWriter, apperr.Unauthorized("Session has been revoked"))
+		return
+	}
 	ctx.Input.SetData(CurrentUserKey, u)
+	ctx.Input.SetData(ClaimsKey, claims)
 }
 
 // RequireAdmin must run after Authenticate; it rejects non-admins with 403.

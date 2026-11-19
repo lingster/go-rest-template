@@ -117,7 +117,7 @@ func (s *AuthService) resetUnverified(u *models.User) error {
 			return err
 		}
 	}
-	return s.tokens.RevokeAll(u.ID)
+	return s.tokens.RevokeAll(u)
 }
 
 func (s *AuthService) createGoogleUser(ctx context.Context, email string, c *GoogleClaims) (*models.User, error) {

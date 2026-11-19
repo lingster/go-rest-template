@@ -35,13 +35,20 @@ func WithGoogleVerifier(v services.GoogleTokenVerifier) Option {
 	return func(o *options) { o.google = v }
 }
 
-// NewMailer builds the configured mail driver.
+// Async mail delivery: a few workers are plenty for transactional mail; the queue absorbs bursts.
+const (
+	mailWorkers   = 4
+	mailQueueSize = 1000
+)
+
+// NewMailer builds the configured mail driver, delivering asynchronously (see mail.AsyncMailer).
 func NewMailer(cfg *config.Config) mail.Mailer {
+	var m mail.Mailer = mail.ConsoleMailer{}
 	if cfg.MailDriver == "smtp" {
-		return &mail.SMTPMailer{Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUsername,
-			Password: cfg.SMTPPassword, From: cfg.MailFrom}
+		m = &mail.SMTPMailer{Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword, From: cfg.MailFrom, RequireTLS: cfg.SMTPRequireTLS}
 	}
-	return mail.ConsoleMailer{}
+	return mail.NewAsync(m, mailWorkers, mailQueueSize)
 }
 
 // New wires everything. mailer may be nil (the configured driver is used).
@@ -62,15 +69,16 @@ func New(cfg *config.Config, repos *repositories.Set, mailer mail.Mailer, opts .
 	}
 	hasher := services.BcryptHasher{Cost: cfg.BcryptCost}
 	audit := services.NewAuditService(repos.Audit)
-	tokens := services.NewTokenService(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, repos.RefreshTokens, audit)
+	tokens := services.NewTokenService(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, repos.RefreshTokens, repos.Users, audit)
 	users := services.NewUserService(repos.Users, repos.Passkeys, repos.Identities, audit)
 	ott := services.NewOneTimeTokenService(repos.OneTime)
-	mfa := services.NewMFAService(repos.Users, repos.Recovery, hasher, box, audit, cfg.WebAuthnRPName)
+	mfa := services.NewMFAService(repos.Users, repos.Recovery, hasher, box, audit, cfg.WebAuthnRPName, services.NewFactorLimiter())
 	passkeys, err := services.NewPasskeyService(cfg, repos.Passkeys, repos.Users, services.NewMemorySessionStore(), audit)
 	if err != nil {
 		return nil, err
 	}
-	auth := services.NewAuthService(cfg, repos, o.google, hasher, tokens, ott, mfa, passkeys, users, mailer, audit)
+	auth := services.NewAuthService(cfg, repos, o.google, hasher, tokens, ott, mfa, passkeys, users, mailer, audit,
+		services.NewMailLimiter())
 	admin := services.NewAdminService(repos, hasher, tokens, users, audit)
 	return &Container{Cfg: cfg, Repos: repos, Audit: audit, Tokens: tokens, Users: users, MFA: mfa,
 		Passkeys: passkeys, Auth: auth, Admin: admin, Mailer: mailer}, nil

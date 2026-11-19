@@ -13,6 +13,7 @@ import (
 	"github.com/lingster/go-rest-template/backend/dto"
 	"github.com/lingster/go-rest-template/backend/mail"
 	"github.com/lingster/go-rest-template/backend/models"
+	"github.com/lingster/go-rest-template/backend/ratelimit"
 	"github.com/lingster/go-rest-template/backend/repositories"
 )
 
@@ -38,17 +39,24 @@ type AuthService struct {
 	userSvc  *UserService
 	mailer   mail.Mailer
 	audit    *AuditService
+	// MailLimiter caps emails sent per address by unauthenticated endpoints (nil disables).
+	MailLimiter ratelimit.Limiter
 	// dummyHash equalises timing for unknown emails.
 	dummyHash string
 }
 
 func NewAuthService(cfg *config.Config, repos *repositories.Set, google GoogleTokenVerifier,
 	hasher PasswordHasher, tokens *TokenService, ott *OneTimeTokenService, mfa *MFAService, passkey *PasskeyService,
-	userSvc *UserService, mailer mail.Mailer, audit *AuditService) *AuthService {
+	userSvc *UserService, mailer mail.Mailer, audit *AuditService, mailLimiter ratelimit.Limiter) *AuthService {
 	dummy, _ := hasher.Hash("dummy-password-for-timing")
 	return &AuthService{cfg: cfg, users: repos.Users, passkeys: repos.Passkeys, recovery: repos.Recovery,
 		idents: repos.Identities, google: google, hasher: hasher, tokens: tokens, ott: ott, mfa: mfa,
-		passkey: passkey, userSvc: userSvc, mailer: mailer, audit: audit, dummyHash: dummy}
+		passkey: passkey, userSvc: userSvc, mailer: mailer, audit: audit, MailLimiter: mailLimiter, dummyHash: dummy}
+}
+
+// mailAllowed reports whether another email may be sent to the address (anti inbox-flooding).
+func (s *AuthService) mailAllowed(email string) bool {
+	return s.MailLimiter == nil || s.MailLimiter.Allow(email)
 }
 
 func (s *AuthService) link(path, token string) string {
@@ -204,7 +212,7 @@ func (s *AuthService) LoginPasskey(ctx context.Context, sessionID string, credJS
 }
 
 func (s *AuthService) complete(ctx context.Context, u *models.User, method string) (*LoginResult, error) {
-	tokens, err := s.tokens.Issue(u, "")
+	tokens, err := s.tokens.Issue(u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -227,10 +235,10 @@ func (s *AuthService) Refresh(ctx context.Context, raw string) (*dto.Tokens, err
 		return nil, apperr.InvalidToken("Invalid refresh token")
 	}
 	if !u.IsActive {
-		_ = s.tokens.RevokeAll(u.ID)
+		_ = s.tokens.RevokeAll(u)
 		return nil, apperr.AccountDisabled()
 	}
-	return s.tokens.Issue(u, rt.FamilyID)
+	return s.tokens.Issue(u, rt)
 }
 
 // Logout revokes the presented refresh token (idempotent).
@@ -266,7 +274,7 @@ func (s *AuthService) VerifyEmail(ctx context.Context, token string) error {
 // ResendVerification re-sends the verification mail; silent for unknown/verified accounts.
 func (s *AuthService) ResendVerification(ctx context.Context, email string) {
 	u, err := s.users.GetByEmail(dto.NormalizeEmail(email))
-	if err != nil || u.EmailVerified || !u.IsActive {
+	if err != nil || u.EmailVerified || !u.IsActive || !s.mailAllowed(u.Email) {
 		return
 	}
 	if err := s.sendVerification(ctx, u); err != nil {
@@ -277,7 +285,7 @@ func (s *AuthService) ResendVerification(ctx context.Context, email string) {
 // ForgotPassword emails a reset link if the account exists; silent otherwise.
 func (s *AuthService) ForgotPassword(ctx context.Context, email string) {
 	u, err := s.users.GetByEmail(dto.NormalizeEmail(email))
-	if err != nil || !u.IsActive {
+	if err != nil || !u.IsActive || !s.mailAllowed(u.Email) {
 		return
 	}
 	tok, err := s.ott.Issue(u.ID, models.PurposeResetPassword, ResetTokenTTL)
@@ -308,7 +316,7 @@ func (s *AuthService) ResetPassword(ctx context.Context, token, password string)
 	if err := s.users.Update(u, "PasswordHash", "EmailVerified", "UpdatedAt"); err != nil {
 		return err
 	}
-	if err := s.tokens.RevokeAll(u.ID); err != nil {
+	if err := s.tokens.RevokeAll(u); err != nil {
 		return err
 	}
 	s.audit.Log(ctx, AuditPasswordReset, u.ID, u.ID, nil)
@@ -322,8 +330,8 @@ func (s *AuthService) ChangePassword(ctx context.Context, u *models.User, curren
 		// (proof of mailbox control) rather than being able to set it with just an access token.
 		return apperr.PasswordNotSet()
 	}
-	if !s.hasher.Verify(u.PasswordHash, current) {
-		return apperr.InvalidCredentials()
+	if err := s.mfa.VerifyPassword(u, current); err != nil {
+		return err
 	}
 	hash, err := s.hasher.Hash(next)
 	if err != nil {
@@ -333,7 +341,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, u *models.User, curren
 	if err := s.users.Update(u, "PasswordHash", "UpdatedAt"); err != nil {
 		return err
 	}
-	if err := s.tokens.RevokeAll(u.ID); err != nil {
+	if err := s.tokens.RevokeAll(u); err != nil {
 		return err
 	}
 	s.sendMail(ctx, mail.PasswordChanged(u.Email, u.Name))

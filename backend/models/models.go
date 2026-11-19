@@ -21,18 +21,21 @@ const (
 
 // User is an account.
 type User struct {
-	ID            string    `orm:"column(id);pk;size(36)"`
-	Email         string    `orm:"column(email);size(255);unique"`
-	Name          string    `orm:"column(name);size(255)"`
-	PasswordHash  string    `orm:"column(password_hash);size(255)"`
-	Role          string    `orm:"column(role);size(32);default(user)"`
-	EmailVerified bool      `orm:"column(email_verified)"`
-	IsActive      bool      `orm:"column(is_active)"`
-	TOTPSecret    string    `orm:"column(totp_secret);size(512)"` // AES-GCM encrypted, base64
-	TOTPEnabled   bool      `orm:"column(totp_enabled)"`
-	TOTPLastStep  int64     `orm:"column(totp_last_step)"` // last accepted 30s time-step (replay protection)
-	CreatedAt     time.Time `orm:"column(created_at);type(datetime)"`
-	UpdatedAt     time.Time `orm:"column(updated_at);type(datetime)"`
+	ID            string `orm:"column(id);pk;size(36)"`
+	Email         string `orm:"column(email);size(255);unique"`
+	Name          string `orm:"column(name);size(255)"`
+	PasswordHash  string `orm:"column(password_hash);size(255)"`
+	Role          string `orm:"column(role);size(32);default(user)"`
+	EmailVerified bool   `orm:"column(email_verified)"`
+	IsActive      bool   `orm:"column(is_active)"`
+	TOTPSecret    string `orm:"column(totp_secret);size(512)"` // AES-GCM encrypted, base64
+	TOTPEnabled   bool   `orm:"column(totp_enabled)"`
+	TOTPLastStep  int64  `orm:"column(totp_last_step)"` // last accepted 30s time-step (replay protection)
+	// TokenVersion is embedded in access tokens; bumping it (sign-out everywhere, password change or
+	// reset, deactivation) invalidates every outstanding access token immediately.
+	TokenVersion int64     `orm:"column(token_version)"`
+	CreatedAt    time.Time `orm:"column(created_at);type(datetime)"`
+	UpdatedAt    time.Time `orm:"column(updated_at);type(datetime)"`
 }
 
 func (*User) TableName() string { return "users" }
@@ -61,11 +64,14 @@ func (*UserIdentity) TableUnique() [][]string { return [][]string{{"Provider", "
 
 // RefreshToken is a hashed, rotating refresh token belonging to a family.
 type RefreshToken struct {
-	ID        string    `orm:"column(id);pk;size(36)"`
-	UserID    string    `orm:"column(user_id);size(36);index"`
-	FamilyID  string    `orm:"column(family_id);size(36);index"`
-	TokenHash string    `orm:"column(token_hash);size(64);unique"`
-	Revoked   bool      `orm:"column(revoked);index"`
+	ID        string `orm:"column(id);pk;size(36)"`
+	UserID    string `orm:"column(user_id);size(36);index"`
+	FamilyID  string `orm:"column(family_id);size(36);index"`
+	TokenHash string `orm:"column(token_hash);size(64);unique"`
+	Revoked   bool   `orm:"column(revoked);index"`
+	// AuthTime is when the user last proved a credential (unix seconds); it is carried across
+	// rotations so a refreshed session cannot pass a "recent login" check. 0 means unknown (stale).
+	AuthTime  int64     `orm:"column(auth_time)"`
 	ExpiresAt time.Time `orm:"column(expires_at);type(datetime)"`
 	CreatedAt time.Time `orm:"column(created_at);type(datetime)"`
 }

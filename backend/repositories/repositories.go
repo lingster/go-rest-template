@@ -29,6 +29,8 @@ type UserRepository interface {
 	Delete(id string) error
 	// AdvanceTOTPStep atomically sets totp_last_step=step iff it is greater than the stored value.
 	AdvanceTOTPStep(id string, step int64) (bool, error)
+	// BumpTokenVersion atomically increments token_version and returns the new value.
+	BumpTokenVersion(id string) (int64, error)
 	List(query string, offset, limit int) ([]*models.User, int64, error)
 	Stats() (UserStats, error)
 }

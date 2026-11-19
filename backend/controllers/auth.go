@@ -200,8 +200,8 @@ func (c *AuthController) ResetPassword() {
 
 // PasskeyLoginBegin starts a passkey login ceremony
 // @Title PasskeyLoginBegin
-// @Description Omit email to use discoverable credentials.
-// @Param	body	body	dto.PasskeyLoginBeginRequest	false	"Optional email"
+// @Description Always a discoverable-credential ceremony with user verification required. The optional email is accepted for compatibility and ignored, so the response never depends on whether an account exists.
+// @Param	body	body	dto.PasskeyLoginBeginRequest	false	"Optional email (ignored)"
 // @Success 200 {object} dto.CeremonyResponse
 // @router /passkey/login/begin [post]
 func (c *AuthController) PasskeyLoginBegin() {
@@ -209,7 +209,7 @@ func (c *AuthController) PasskeyLoginBegin() {
 	if !c.DecodeOptional(&req) {
 		return
 	}
-	sid, opts, err := c.C.Passkeys.BeginLogin(dto.NormalizeEmail(req.Email))
+	sid, opts, err := c.C.Passkeys.BeginLogin()
 	if err != nil {
 		c.Fail(err)
 		return

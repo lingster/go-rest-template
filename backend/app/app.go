@@ -22,6 +22,7 @@ import (
 	"github.com/lingster/go-rest-template/backend/httpx"
 	"github.com/lingster/go-rest-template/backend/landing"
 	"github.com/lingster/go-rest-template/backend/mail"
+	"github.com/lingster/go-rest-template/backend/ratelimit"
 	"github.com/lingster/go-rest-template/backend/repositories"
 	_ "github.com/lingster/go-rest-template/backend/routers" // registers routes
 	"github.com/lingster/go-rest-template/backend/services"
@@ -110,9 +111,9 @@ func buildHandler(cfg *config.Config, assets fs.FS) http.Handler {
 	}
 	mux.Handle("/", web.BeeApp.Handlers)
 
-	var limiter filters.Limiter
+	var limiter ratelimit.Limiter
 	if cfg.RateLimitPerMinute > 0 {
-		limiter = filters.NewFixedWindowLimiter(cfg.RateLimitPerMinute, time.Minute)
+		limiter = ratelimit.NewFixedWindow(cfg.RateLimitPerMinute, time.Minute)
 	}
 	return filters.Chain(mux,
 		filters.Recover(),

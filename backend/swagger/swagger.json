@@ -416,13 +416,13 @@
                 "tags": [
                     "auth"
                 ],
-                "description": "Omit email to use discoverable credentials.\n\u003cbr\u003e",
+                "description": "Always a discoverable-credential ceremony with user verification required. The optional email is accepted for compatibility and ignored, so the response never depends on whether an account exists.\n\u003cbr\u003e",
                 "operationId": "AuthController.PasskeyLoginBegin",
                 "parameters": [
                     {
                         "in": "body",
                         "name": "body",
-                        "description": "Optional email",
+                        "description": "Optional email (ignored)",
                         "schema": {
                             "$ref": "#/definitions/dto.PasskeyLoginBeginRequest"
                         }
@@ -804,6 +804,7 @@
                 "tags": [
                     "me"
                 ],
+                "description": "Requires a recent sign-in (REAUTH_MAX_AGE, default 10 min), otherwise 403 reauthentication_required.\n\u003cbr\u003e",
                 "operationId": "MeController.TOTPSetup",
                 "responses": {
                     "200": {
@@ -811,6 +812,9 @@
                         "schema": {
                             "$ref": "#/definitions/dto.TOTPSetupResponse"
                         }
+                    },
+                    "403": {
+                        "description": "reauthentication_required"
                     }
                 },
                 "security": [
@@ -884,6 +888,7 @@
                 "tags": [
                     "me"
                 ],
+                "description": "Requires a recent sign-in (REAUTH_MAX_AGE, default 10 min), otherwise 403 reauthentication_required.\n\u003cbr\u003e",
                 "operationId": "MeController.PasskeyRegisterBegin",
                 "responses": {
                     "200": {
@@ -891,6 +896,9 @@
                         "schema": {
                             "$ref": "#/definitions/dto.CeremonyResponse"
                         }
+                    },
+                    "403": {
+                        "description": "reauthentication_required"
                     }
                 },
                 "security": [

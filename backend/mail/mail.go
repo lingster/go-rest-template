@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	htmltemplate "html/template"
 	"log"
@@ -43,24 +45,112 @@ func (ConsoleMailer) Send(_ context.Context, m Message) error {
 
 // ---------- smtp ----------
 
+// smtpTimeout bounds a whole SMTP conversation so a slow or hung server cannot pin goroutines.
+const smtpTimeout = 30 * time.Second
+
 // SMTPMailer sends multipart/alternative emails through an SMTP server.
-// STARTTLS is used automatically when the server advertises it; auth only when a username is set.
+// STARTTLS is used whenever the server advertises it; with RequireTLS a server that does not (or an
+// attacker stripping the STARTTLS capability) makes the send fail instead of falling back to
+// plaintext. Auth is used only when a username is set.
 type SMTPMailer struct {
 	Host, Username, Password, From string
 	Port                           int
+	RequireTLS                     bool
 }
 
-func (s *SMTPMailer) Send(_ context.Context, m Message) error {
+func (s *SMTPMailer) Send(ctx context.Context, m Message) error {
 	from, err := mail.ParseAddress(s.From)
 	if err != nil {
 		return fmt.Errorf("invalid MAIL_FROM: %w", err)
 	}
-	addr := net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
-	var auth smtp.Auth
-	if s.Username != "" {
-		auth = smtp.PlainAuth("", s.Username, s.Password, s.Host)
+	ctx, cancel := context.WithTimeout(ctx, smtpTimeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(s.Host, strconv.Itoa(s.Port)))
+	if err != nil {
+		return err
 	}
-	return smtp.SendMail(addr, auth, from.Address, []string{m.To}, buildMIME(s.From, m))
+	deadline, _ := ctx.Deadline()
+	_ = conn.SetDeadline(deadline)
+	c, err := smtp.NewClient(conn, s.Host)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	defer c.Close()
+	if err := s.secure(c); err != nil {
+		return err
+	}
+	if s.Username != "" {
+		// PlainAuth itself refuses to send credentials over an unencrypted non-localhost connection.
+		if err := c.Auth(smtp.PlainAuth("", s.Username, s.Password, s.Host)); err != nil {
+			return err
+		}
+	}
+	if err := c.Mail(from.Address); err != nil {
+		return err
+	}
+	if err := c.Rcpt(m.To); err != nil {
+		return err
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(buildMIME(s.From, m)); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.Quit()
+}
+
+func (s *SMTPMailer) secure(c *smtp.Client) error {
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		return c.StartTLS(&tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12})
+	}
+	if s.RequireTLS {
+		return fmt.Errorf("smtp server %s does not offer STARTTLS and SMTP_REQUIRE_TLS is set", s.Host)
+	}
+	return nil
+}
+
+// ---------- async ----------
+
+// AsyncMailer hands messages to a small worker pool so callers never wait on the mail server. This
+// keeps response times of the no-enumeration endpoints (forgot password, resend verification) the
+// same whether or not a mail is sent, and keeps a slow SMTP server from stalling requests. The queue
+// is bounded: when it is full the message is dropped and logged rather than blocking the caller.
+type AsyncMailer struct {
+	next  Mailer
+	queue chan Message
+}
+
+// NewAsync starts workers sending through next.
+func NewAsync(next Mailer, workers, queueSize int) *AsyncMailer {
+	a := &AsyncMailer{next: next, queue: make(chan Message, queueSize)}
+	for i := 0; i < workers; i++ {
+		go a.work()
+	}
+	return a
+}
+
+func (a *AsyncMailer) work() {
+	for m := range a.queue {
+		if err := a.next.Send(context.Background(), m); err != nil {
+			log.Printf("mail: sending to %s failed: %v", m.To, err)
+		}
+	}
+}
+
+// Send enqueues m; it fails only when the queue is full.
+func (a *AsyncMailer) Send(_ context.Context, m Message) error {
+	select {
+	case a.queue <- m:
+		return nil
+	default:
+		return errors.New("mail queue full, message dropped")
+	}
 }
 
 func sanitizeHeader(s string) string { return strings.NewReplacer("\r", " ", "\n", " ").Replace(s) }

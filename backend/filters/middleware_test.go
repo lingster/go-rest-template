@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/lingster/go-rest-template/backend/filters"
+	"github.com/lingster/go-rest-template/backend/ratelimit"
 )
 
 func TestRateLimitMiddleware(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	h := filters.RateLimit(filters.NewFixedWindowLimiter(2, time.Minute), "/api/v1/auth/", false)(ok)
+	h := filters.RateLimit(ratelimit.NewFixedWindow(2, time.Minute), "/api/v1/auth/", false)(ok)
 
 	hit := func(path, ip string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", path, nil)

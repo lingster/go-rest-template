@@ -272,13 +272,13 @@ paths:
       tags:
       - auth
       description: |-
-        Omit email to use discoverable credentials.
+        Always a discoverable-credential ceremony with user verification required. The optional email is accepted for compatibility and ignored, so the response never depends on whether an account exists.
         <br>
       operationId: AuthController.PasskeyLoginBegin
       parameters:
       - in: body
         name: body
-        description: Optional email
+        description: Optional email (ignored)
         schema:
           $ref: '#/definitions/dto.PasskeyLoginBeginRequest'
       responses:
@@ -528,12 +528,17 @@ paths:
     post:
       tags:
       - me
+      description: |-
+        Requires a recent sign-in (REAUTH_MAX_AGE, default 10 min), otherwise 403 reauthentication_required.
+        <br>
       operationId: MeController.TOTPSetup
       responses:
         "200":
           description: ""
           schema:
             $ref: '#/definitions/dto.TOTPSetupResponse'
+        "403":
+          description: reauthentication_required
       security:
       - BearerAuth: []
   /me/change-password:
@@ -593,12 +598,17 @@ paths:
     post:
       tags:
       - me
+      description: |-
+        Requires a recent sign-in (REAUTH_MAX_AGE, default 10 min), otherwise 403 reauthentication_required.
+        <br>
       operationId: MeController.PasskeyRegisterBegin
       responses:
         "200":
           description: ""
           schema:
             $ref: '#/definitions/dto.CeremonyResponse'
+        "403":
+          description: reauthentication_required
       security:
       - BearerAuth: []
   /me/passkeys/register/finish:

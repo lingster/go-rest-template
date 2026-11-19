@@ -228,8 +228,8 @@ func TestChangePasswordRevokesSessionsAndNotifies(t *testing.T) {
 	if mailer.Count(email) != before+1 || mailer.LastSubject(email) != "Your password was changed" {
 		t.Fatalf("notification email missing (subject %q)", mailer.LastSubject(email))
 	}
-	// the current access token keeps working until it expires
-	expect(t, call(t, "GET", "/api/v1/me", nil, access), 200, "")
+	// signing out everywhere includes outstanding access tokens, not only refresh tokens
+	expect(t, call(t, "GET", "/api/v1/me", nil, access), 401, "unauthorized")
 }
 
 func TestChangePassword(t *testing.T) {
@@ -346,6 +346,11 @@ func TestAdminAccessControlAndManagement(t *testing.T) {
 	expect(t, call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, ""), 403, "account_disabled")
 	expect(t, call(t, "GET", "/api/v1/me", nil, userAccess), 403, "account_disabled")
 	call(t, "PATCH", "/api/v1/admin/users/"+uid, map[string]interface{}{"is_active": true, "role": "admin"}, adminAccess)
+	// deactivation revoked the old token for good; a fresh login picks up the new role
+	expect(t, call(t, "GET", "/api/v1/admin/stats", nil, userAccess), 401, "unauthorized")
+	relog := call(t, "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, "")
+	expect(t, relog, 200, "")
+	userAccess = relog.str("tokens", "access_token")
 	expect(t, call(t, "GET", "/api/v1/admin/stats", nil, userAccess), 200, "")
 
 	// self-protection
@@ -357,6 +362,7 @@ func TestAdminAccessControlAndManagement(t *testing.T) {
 	if rs.Status != 204 {
 		t.Fatalf("revoke: %d %s", rs.Status, rs.Raw)
 	}
+	expect(t, call(t, "GET", "/api/v1/me", nil, userAccess), 401, "unauthorized")
 	if d := call(t, "DELETE", "/api/v1/admin/users/"+uid, nil, adminAccess); d.Status != 204 {
 		t.Fatalf("delete: %d %s", d.Status, d.Raw)
 	}

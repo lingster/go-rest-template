@@ -35,7 +35,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - uses: astral-sh/setup-uv@v6
       - name: Install bee
-        run: go install github.com/beego/bee/v2@latest
+        run: go install github.com/beego/bee/v2@v2.3.0
       - name: Unit tests for init_project.py
         run: python3 -m unittest discover -s scripts -v
       - name: Generate a project with copier

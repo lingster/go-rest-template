@@ -7,6 +7,18 @@
 - **Webapp**: tokens in `localStorage` are readable by any XSS payload. Prefer keeping the access token in memory and the refresh token in an `HttpOnly; Secure; SameSite` cookie if you move auth to the same site, and keep the CSP strict so XSS is unlikely. Whatever you pick, document the trade-off for your users.
 - **Flutter web** shares the browser trade-offs above.
 
+## Sessions and step-up
+
+- Access tokens carry the user's session version (`ver`). Password change/reset, admin "revoke sessions", deactivation
+  and the Google pre-hijack wipe bump it, so outstanding access tokens stop working at once, not after their 15 min TTL.
+- Access tokens also carry `auth_time`, the last time a credential was proven. Refresh rotation keeps it, so a stolen
+  refresh token cannot be used to look "freshly signed in". Adding a credential (passkey registration, TOTP setup)
+  requires `auth_time` within `REAUTH_MAX_AGE` (10 min) or returns 403 `reauthentication_required`; otherwise a stolen
+  session could plant a passkey that survives a password reset.
+- Passkeys are registered as discoverable and **user-verifying** (PIN/biometric): one passkey both signs in and satisfies
+  MFA, so a bare touch of a stolen security key must not be enough. Assertions with a clone warning (sign counter went
+  backwards) are rejected. Login ceremonies never include `allowCredentials`, so they do not reveal accounts or credential IDs.
+
 ## Content Security Policy
 
 - The webapp should ship a strict CSP (no `unsafe-inline`; use nonces or hashes for any inline script/style; `connect-src` limited to your API origin). SvelteKit supports this via `kit.csp` in `svelte.config.js`.
@@ -23,17 +35,51 @@
 
 ## Rate limiting
 
-- Auth endpoints (login, register, forgot/reset password, resend verification, 2FA) must be rate limited per IP and per account; the API returns `429 rate_limited`.
-- The built-in limiter is in-memory and per-instance. Behind multiple instances, enforce limits at the edge (Cloudflare rules) or move the counters to a shared store.
-- Password reset and resend-verification always respond 202 to avoid user enumeration.
+- Per client: `/api/v1/auth/*` is limited per IPv4 address or per IPv6 **/64** (one subscriber's block), so rotating
+  IPv6 addresses does not reset the budget. With `TRUST_PROXY=true` only the **last** `X-Forwarded-For` entry is used;
+  earlier entries are client-supplied and would let anyone choose their own rate-limit key and audit-log IP.
+- Per account (any IP): 10 second-factor attempts and 10 current-password checks per 15 min, then `429 rate_limited`.
+  Without this, a botnet that knows the password can brute-force a 6-digit TOTP in minutes. Password *login* is not
+  limited per account on purpose (that would let anyone lock out any user); rely on the per-IP limit and the edge.
+- At most 5 forgot-password / resend-verification emails per address per hour (anti inbox-flooding).
+- The limiters are in-memory and per-instance. Behind multiple instances, enforce limits at the edge (Cloudflare rules) or move the counters to a shared store (`ratelimit.Limiter` interface).
+- Password reset and resend-verification always respond 202 to avoid user enumeration. Mail is delivered by a background
+  queue, so the response time does not reveal whether an email was sent.
+
+## Email
+
+- `SMTP_REQUIRE_TLS` (default on in prod) makes delivery fail instead of falling back to plaintext when STARTTLS is not
+  offered, which also defeats STARTTLS-stripping. SMTP conversations time out after 30s.
+- `MAIL_DRIVER=console` prints reset links to the logs; prod logs a warning if it is used.
+
+## Containers
+
+- `backend/Dockerfile`: digest-pinned build and runtime images, `go mod verify`, static binary on distroless
+  `nonroot` (no shell), built-in `HEALTHCHECK` (`/server healthcheck`).
+- `docker-compose.yml` is a **development** stack: ports bound to 127.0.0.1, read-only root filesystems, `cap_drop: ALL`,
+  `no-new-privileges`, non-root users (Postgres runs as `postgres` without its root entrypoint), memory/PID limits,
+  rotated logs and a Postgres network Mailpit cannot reach. Do not expose Mailpit: it shows every reset link.
+- For production run the same image with `read_only`, `cap_drop: ALL`, `no-new-privileges`, secrets from your platform's
+  secret store (not a committed file), TLS in front, and `APP_ENV=prod`.
 
 ## Secrets
 
-- Never commit secrets. `JWT_SECRET` must be a long random value (32+ bytes) unique per environment; rotating it invalidates all access tokens.
+- Never commit secrets. `JWT_SECRET` must be a long random value (32+ bytes) unique per environment; rotating it invalidates all access tokens **and** makes stored TOTP secrets undecryptable (the at-rest key is derived from it), so users with 2FA would need recovery codes.
+- `ADMIN_PASSWORD` is only for the first start: prod refuses the example value or anything under 12 characters. Remove it from the environment once the admin exists (a warning is logged while it is set).
 - Store deploy credentials (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) as GitHub Actions **secrets**, and public values (`PUBLIC_API_URL`, `API_BASE_URL`) as **variables**.
 - Use a Cloudflare API token scoped to Workers deploys only.
 - WebAuthn: set the relying party ID and allowed origins to your real domains; passkeys are bound to them.
 - Android release signing: keep the keystore and passwords in secrets, never in the repo.
+
+## Known trade-offs (not changed)
+
+- `POST /auth/register` returns 409 for an existing email, which reveals that the account exists. Removing it means
+  answering 201 for every request and emailing the owner instead; do that if enumeration matters for your product.
+- Linking a Google sign-in to an existing account trusts Google's `email_verified`. For addresses outside Gmail/Workspace
+  domains that is Google's verification at account creation; consider requiring the `hd` claim, or skipping auto-linking
+  for such addresses, if that matters to you.
+- The swagger UI at `/swagger/` is public. Put it behind auth or drop it from production builds if you do not want the API
+  surface published.
 
 ## Reporting a vulnerability
 

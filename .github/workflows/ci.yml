@@ -85,7 +85,7 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Install bee
-        run: go install github.com/beego/bee/v2@latest
+        run: go install github.com/beego/bee/v2@v2.3.0
       - name: Swagger docs are up to date
         run: make docs && git diff --exit-code -- swagger routers
       - uses: docker/setup-buildx-action@v3

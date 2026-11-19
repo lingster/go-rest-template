@@ -14,6 +14,7 @@ import (
 
 	"github.com/lingster/go-rest-template/backend/apperr"
 	"github.com/lingster/go-rest-template/backend/models"
+	"github.com/lingster/go-rest-template/backend/ratelimit"
 	"github.com/lingster/go-rest-template/backend/repositories"
 )
 
@@ -34,11 +35,25 @@ type MFAService struct {
 	audit    *AuditService
 	issuer   string
 	Now      func() time.Time
+	// Attempts limits code and password verifications per account (nil disables).
+	Attempts ratelimit.Limiter
 }
 
 func NewMFAService(users repositories.UserRepository, recovery repositories.RecoveryCodeRepository,
-	hasher PasswordHasher, box *SecretBox, audit *AuditService, issuer string) *MFAService {
-	return &MFAService{users: users, recovery: recovery, hasher: hasher, box: box, audit: audit, issuer: issuer, Now: time.Now}
+	hasher PasswordHasher, box *SecretBox, audit *AuditService, issuer string, attempts ratelimit.Limiter) *MFAService {
+	return &MFAService{users: users, recovery: recovery, hasher: hasher, box: box, audit: audit, issuer: issuer,
+		Now: time.Now, Attempts: attempts}
+}
+
+// VerifyPassword checks the account's current password, counting the attempt against the per-account budget.
+func (m *MFAService) VerifyPassword(u *models.User, password string) error {
+	if err := checkAttempt(m.Attempts, attemptPassword, u.ID); err != nil {
+		return err
+	}
+	if !m.hasher.Verify(u.PasswordHash, password) {
+		return apperr.InvalidCredentials()
+	}
+	return nil
 }
 
 // Setup generates a pending TOTP secret (not active until Enable succeeds).
@@ -121,8 +136,10 @@ func (m *MFAService) Disable(ctx context.Context, u *models.User, password, code
 		return apperr.Conflict("Two-factor authentication is not enabled")
 	}
 	// Password-less (Google) accounts skip the password check; the TOTP/recovery code below remains required.
-	if u.HasPassword() && !m.hasher.Verify(u.PasswordHash, password) {
-		return apperr.InvalidCredentials()
+	if u.HasPassword() {
+		if err := m.VerifyPassword(u, password); err != nil {
+			return err
+		}
 	}
 	if ok, err := m.VerifyCode(u, code); err != nil {
 		return err
@@ -159,8 +176,12 @@ func (m *MFAService) RegenerateRecoveryCodes(ctx context.Context, u *models.User
 	return codes, nil
 }
 
-// VerifyCode checks a 6-digit TOTP code or consumes a recovery code.
+// VerifyCode checks a 6-digit TOTP code or consumes a recovery code. Every call counts against the
+// account's attempt budget; past it, rate_limited is returned without checking the code.
 func (m *MFAService) VerifyCode(u *models.User, code string) (bool, error) {
+	if err := checkAttempt(m.Attempts, attemptFactor, u.ID); err != nil {
+		return false, err
+	}
 	code = strings.TrimSpace(code)
 	if t := normalizeTOTP(code); len(t) == 6 && isDigits(t) {
 		return m.validateTOTP(u, t), nil

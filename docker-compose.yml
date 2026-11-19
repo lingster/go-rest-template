@@ -1,45 +1,84 @@
+# LOCAL DEVELOPMENT stack (API + Postgres + Mailpit). Not a production deployment:
+# APP_ENV=dev, Mailpit captures every email (including password-reset links) and the defaults below
+# are well-known. Hardening that still applies here:
+#   - published ports bind to 127.0.0.1 only (override *_BIND to expose them deliberately),
+#   - images pinned by digest, read-only root filesystems, all Linux capabilities dropped,
+#     no-new-privileges, non-root users, memory/PID limits, rotated logs,
+#   - Postgres is on its own network, unreachable from Mailpit.
+# Override credentials in a .env file next to this one (see .env.example).
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 256
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
 services:
   postgres:
-    image: postgres:16
+    <<: *hardened
+    image: postgres:16.16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
+    # Run as the image's postgres user from the start: no root entrypoint, so no capabilities needed.
+    user: "999:999"
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
     ports:
-      - "5432:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:5432:5432" # for `make run` against this DB; never 0.0.0.0 by default
     volumes:
       - pgdata:/var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
+    shm_size: 128m
+    mem_limit: 512m
+    networks: [db]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 3s
       retries: 10
 
   mailpit:
-    image: axllent/mailpit
+    <<: *hardened
+    image: axllent/mailpit:v1.34.0@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e
+    user: "65534:65534" # nobody; both ports are unprivileged
+    environment:
+      MP_MAX_MESSAGES: 500
     ports:
-      - "1025:1025" # SMTP
-      - "8025:8025" # Web UI
+      - "${MAILPIT_BIND:-127.0.0.1}:1025:1025" # SMTP
+      - "${MAILPIT_BIND:-127.0.0.1}:8025:8025" # Web UI: shows reset links, keep it local
+    tmpfs:
+      - /tmp
+    mem_limit: 128m
+    networks: [mail]
 
   api:
+    <<: *hardened
     build:
       context: ./backend
+    image: go-rest-template-api:dev
     depends_on:
       postgres:
         condition: service_healthy
       mailpit:
         condition: service_started
     ports:
-      - "8080:8080"
+      - "${API_BIND:-127.0.0.1}:8080:8080"
     environment:
       APP_ENV: dev
       HTTP_PORT: "8080"
       DB_DRIVER: postgres
-      DATABASE_URL: postgres://app:app@postgres:5432/app?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-app}?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-dev-insecure-change-me-please-0123456789}
       MAIL_DRIVER: smtp
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
+      SMTP_REQUIRE_TLS: "false" # Mailpit speaks plaintext SMTP on the private network
       MAIL_FROM: "App <no-reply@example.com>"
       FRONTEND_URL: http://localhost:5173
       CORS_ALLOWED_ORIGINS: http://localhost:5173
@@ -47,6 +86,23 @@ services:
       WEBAUTHN_RP_ORIGINS: http://localhost:5173
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-please}
+      GOOGLE_CLIENT_IDS: ${GOOGLE_CLIENT_IDS:-}
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    # db: Postgres; mail: Mailpit; default: published port and egress (Google JWKS).
+    networks: [default, db, mail]
+    healthcheck:
+      test: ["CMD", "/server", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+networks:
+  default:
+  db:
+  mail:
 
 volumes:
   pgdata:

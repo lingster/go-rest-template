@@ -16,3 +16,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Base images in backend/Dockerfile and docker-compose.yml are pinned by digest; keep them current.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly

@@ -23,6 +23,7 @@ const (
 	CodeInternal           = "internal_error"
 	CodeGoogleDisabled     = "google_signin_disabled"
 	CodePasswordNotSet     = "password_not_set"
+	CodeReauthRequired     = "reauthentication_required"
 )
 
 // Error is an error carrying an HTTP status and a contract error code.
@@ -74,6 +75,12 @@ func GoogleDisabled() *Error {
 func PasswordNotSet() *Error {
 	return New(http.StatusConflict, CodePasswordNotSet, "This account has no password. Use \"forgot password\" to set one")
 }
+
+// ReauthRequired is returned by sensitive operations when the session's last sign-in is too old.
+func ReauthRequired() *Error {
+	return New(http.StatusForbidden, CodeReauthRequired, "Please sign in again to continue")
+}
+
 func Internal() *Error {
 	return New(http.StatusInternalServerError, CodeInternal, "Internal server error")
 }
