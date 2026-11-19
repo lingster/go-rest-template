@@ -19,7 +19,7 @@ x-hardened: &hardened
 services:
   postgres:
     <<: *hardened
-    image: postgres:16.16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
+    image: postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
     # Run as the image's postgres user from the start: no root entrypoint, so no capabilities needed.
     user: "999:999"
     environment:
