@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -52,6 +53,14 @@ type Config struct {
 
 	FrontendURL        string
 	CORSAllowedOrigins []string
+
+	// CookieSecure marks the webapp's refresh cookie Secure and names it __Secure-rt
+	// (COOKIE_SECURE, default true when APP_ENV=prod; plain-HTTP dev needs false).
+	CookieSecure bool
+	// CookieDomain is the refresh cookie Domain (COOKIE_DOMAIN). Empty (default) is host-only, which is
+	// right whenever browsers call the API on a single host; set a parent domain (example.com) only if the
+	// API is reached on several sibling hosts.
+	CookieDomain string
 
 	WebAuthnRPID      string
 	WebAuthnRPName    string
@@ -102,6 +111,7 @@ func Load() (*Config, error) {
 		MailFrom:                 env("MAIL_FROM", "App <no-reply@example.com>"),
 		FrontendURL:              strings.TrimRight(env("FRONTEND_URL", "http://localhost:5173"), "/"),
 		CORSAllowedOrigins:       envList("CORS_ALLOWED_ORIGINS", []string{"http://localhost:5173"}),
+		CookieDomain:             env("COOKIE_DOMAIN", ""),
 		WebAuthnRPID:             env("WEBAUTHN_RP_ID", "localhost"),
 		WebAuthnRPName:           env("WEBAUTHN_RP_NAME", "Go REST Template"),
 		WebAuthnRPOrigins:        envList("WEBAUTHN_RP_ORIGINS", []string{"http://localhost:5173"}),
@@ -114,6 +124,7 @@ func Load() (*Config, error) {
 	}
 	c.SMTPRequireTLS = envBool("SMTP_REQUIRE_TLS", c.IsProd())
 	c.SwaggerEnabled = envBool("SWAGGER_ENABLED", !c.IsProd())
+	c.CookieSecure = envBool("COOKIE_SECURE", c.IsProd())
 	return c, c.Validate()
 }
 
@@ -136,6 +147,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("ADMIN_PASSWORD must not be the example value and must be at least %d characters in prod",
 			MinProdAdminPasswordLen)
 	}
+	// The CORS allow-list doubles as the CSRF origin check for the webapp's refresh cookie, and native
+	// clients do not use CORS at all, so prod must name its browser origins.
+	if c.IsProd() && slices.Contains(c.CORSAllowedOrigins, "*") {
+		return errors.New("CORS_ALLOWED_ORIGINS must list explicit origins in prod, not *")
+	}
 	return nil
 }
 
@@ -151,10 +167,8 @@ func (c *Config) Warnings() []string {
 	if !c.SMTPRequireTLS && c.MailDriver == "smtp" {
 		w = append(w, "SMTP_REQUIRE_TLS=false in prod: reset links may be sent unencrypted")
 	}
-	for _, o := range c.CORSAllowedOrigins {
-		if o == "*" {
-			w = append(w, "CORS_ALLOWED_ORIGINS contains * in prod")
-		}
+	if !c.CookieSecure {
+		w = append(w, "COOKIE_SECURE=false in prod: the webapp's refresh cookie may be sent over plain HTTP")
 	}
 	for _, o := range c.WebAuthnRPOrigins {
 		if strings.HasPrefix(o, "http://") {

@@ -3,9 +3,30 @@
 ## Token storage trade-offs
 
 - **Access tokens** are short-lived (15 min) HS256 JWTs; **refresh tokens** are opaque, stored hashed (SHA-256) server-side and rotated on every use. Reuse of a revoked refresh token revokes the whole family.
-- **Flutter (mobile)**: keep tokens in the platform keystore (`flutter_secure_storage`), not in plain preferences.
-- **Webapp**: tokens in `localStorage` are readable by any XSS payload. Prefer keeping the access token in memory and the refresh token in an `HttpOnly; Secure; SameSite` cookie if you move auth to the same site, and keep the CSP strict so XSS is unlikely. Whatever you pick, document the trade-off for your users.
-- **Flutter web** shares the browser trade-offs above.
+- **Flutter (mobile)**: tokens travel in JSON bodies and are kept in the platform keystore (`flutter_secure_storage`), not in plain preferences.
+- **Webapp**: the access token is kept in memory only. The refresh token is an `HttpOnly` cookie that page scripts cannot
+  read, so an XSS payload cannot exfiltrate it. The webapp opts in by sending `X-Session-Transport: cookie` on every
+  request (with `credentials: 'include'`); the API then sets the cookie on login / 2FA / Google / passkey login and refresh
+  and leaves `refresh_token` out of the body. On load the webapp restores the session with a cookie `POST /auth/refresh`.
+  A refresh token left in `localStorage` by an older build is sent once in the body to move it into the cookie, then deleted.
+  Requests that set or clear the cookie (login, 2FA, Google, passkey finish, refresh, logout) are sent one at a time, so a
+  slow restore or refresh can never overwrite a newer sign-in's cookie or re-create it after logout.
+  - Cookie: `__Secure-rt` (`rt` when `COOKIE_SECURE=false`, plain-HTTP dev only), `HttpOnly; Secure; SameSite=Strict;
+    Path=/api/v1/auth; Max-Age=<REFRESH_TOKEN_TTL>`, host-only unless `COOKIE_DOMAIN` is set. `__Host-` is not used because
+    it forbids a path. Logout and failed refreshes clear it.
+  - CSRF: a refresh/logout authenticated by the cookie must carry `X-Session-Transport: cookie`, which a cross-site form or
+    simple request cannot send without passing a CORS preflight, and its `Origin`, when present, must be explicitly listed in
+    `CORS_ALLOWED_ORIGINS`; otherwise 403 `forbidden`. `SameSite=Strict` is a second layer. CORS sends
+    `Access-Control-Allow-Credentials: true` only to explicitly listed origins, never with `*`, and `APP_ENV=prod` refuses to
+    start with `CORS_ALLOWED_ORIGINS=*` (the allow-list is the CSRF origin check; native apps do not use CORS).
+  - **Same-site deployment required**: the webapp and API must share a registrable domain (e.g. `app.example.com` +
+    `api.example.com`, or one host). Browsers treat cookies on a different site (e.g. `*.workers.dev` -> `api.example.com`)
+    as third-party and block them, and `SameSite=Strict` would withhold them anyway. For such deployments, serve the API on
+    the webapp's own origin (e.g. a Cloudflare route `app.example.com/api/*` to the API) and set `PUBLIC_API_URL` to it.
+  - XSS is still serious: injected script cannot steal the refresh token, but while the page is open it can call the API
+    as the user (including `/auth/refresh` to mint access tokens). Keep the CSP strict.
+- **Flutter web** sends no `X-Session-Transport` header, so it gets body tokens and shares the old browser trade-off
+  (anything it stores is readable by XSS). Switch it to the cookie transport if it ships to production.
 
 ## Sessions and step-up
 

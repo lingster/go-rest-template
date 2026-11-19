@@ -18,10 +18,15 @@ export class ApiError extends Error {
 	}
 }
 
+/**
+ * Opts into the cookie session transport: the API keeps the refresh token in an HttpOnly cookie
+ * (scoped to /api/v1/auth) instead of returning it in JSON, so page scripts never see it.
+ */
+export const SESSION_TRANSPORT_HEADER = 'X-Session-Transport';
+
 /** Callbacks through which the client talks to whoever owns the session (DIP). */
 export interface AuthHooks {
 	getAccessToken(): string | null;
-	getRefreshToken(): string | null;
 	onTokens(tokens: Tokens): void;
 	onAuthFailure(): void;
 }
@@ -38,6 +43,20 @@ export interface ApiClientOptions {
 	baseUrl: string;
 	fetch?: typeof fetch;
 }
+
+/**
+ * Endpoints whose responses set or clear the refresh cookie. They are sent one at a time so a
+ * response can never overwrite the cookie written by a later request (e.g. a slow session restore
+ * clobbering a fresh login, or an in-flight refresh re-creating the cookie after logout).
+ */
+const COOKIE_WRITING_PATHS = new Set([
+	'/auth/login',
+	'/auth/login/2fa',
+	'/auth/google',
+	'/auth/passkey/login/finish',
+	'/auth/refresh',
+	'/auth/logout'
+]);
 
 /** 401 codes that mean "your access token is no good" (as opposed to bad credentials / MFA code). */
 const REFRESHABLE_CODES = new Set(['unauthorized', 'token_expired']);
@@ -62,6 +81,15 @@ export function createApiClient({ baseUrl, fetch: fetchImpl }: ApiClientOptions)
 	const root = `${baseUrl.replace(/\/+$/, '')}/api/v1`;
 	let hooks: AuthHooks | null = null;
 	let refreshing: Promise<void> | null = null;
+	/** Tail of the cookie-writing request queue (see COOKIE_WRITING_PATHS). */
+	let cookieQueue: Promise<unknown> = Promise.resolve();
+
+	/** Runs task after every previously queued cookie-writing request has settled. */
+	function serialized<T>(task: () => Promise<T>): Promise<T> {
+		const run = cookieQueue.then(task, task);
+		cookieQueue = run.catch(() => undefined);
+		return run;
+	}
 
 	const doFetch: typeof fetch = (...args) => (fetchImpl ?? globalThis.fetch)(...args);
 
@@ -75,38 +103,37 @@ export function createApiClient({ baseUrl, fetch: fetchImpl }: ApiClientOptions)
 	}
 
 	async function send(path: string, opts: RequestOptions, withAuth: boolean): Promise<Response> {
-		const headers: Record<string, string> = { Accept: 'application/json' };
+		const headers: Record<string, string> = {
+			Accept: 'application/json',
+			[SESSION_TRANSPORT_HEADER]: 'cookie'
+		};
 		if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
 		const token = withAuth ? hooks?.getAccessToken() : null;
 		if (token) headers.Authorization = `Bearer ${token}`;
-		try {
-			return await doFetch(buildUrl(path, opts.query), {
+		const fetchIt = () =>
+			doFetch(buildUrl(path, opts.query), {
 				method: opts.method ?? 'GET',
 				headers,
+				credentials: 'include',
 				body: opts.body === undefined ? undefined : JSON.stringify(opts.body)
 			});
+		try {
+			// The cookie is stored when the response headers arrive, i.e. when fetch resolves.
+			return await (COOKIE_WRITING_PATHS.has(path) ? serialized(fetchIt) : fetchIt());
 		} catch {
 			throw new ApiError(0, 'network_error', 'Unable to reach the server. Please try again.');
 		}
 	}
 
+	/** The refresh token travels in the HttpOnly cookie, so the request has no body. */
 	async function doRefresh(): Promise<void> {
-		const refreshToken = hooks?.getRefreshToken();
-		if (!hooks || !refreshToken) {
-			hooks?.onAuthFailure();
-			throw new ApiError(401, 'unauthorized', 'Session expired');
-		}
-		const res = await send(
-			'/auth/refresh',
-			{ method: 'POST', body: { refresh_token: refreshToken } },
-			false
-		);
+		const res = await send('/auth/refresh', { method: 'POST' }, false);
 		if (!res.ok) {
 			const err = await toApiError(res);
-			hooks.onAuthFailure();
+			hooks?.onAuthFailure();
 			throw err;
 		}
-		hooks.onTokens((await res.json()) as Tokens);
+		hooks?.onTokens((await res.json()) as Tokens);
 	}
 
 	/** Single-flight: concurrent 401s share one refresh call (tokens rotate, so double refresh would revoke the family). */

@@ -71,11 +71,23 @@ func (r resp) errCode() string { return r.str("error", "code") }
 
 func call(t *testing.T, method, path string, body interface{}, token string) resp {
 	t.Helper()
-	return callFrom(t, "", method, path, body, token)
+	return send(t, "", method, path, body, token, nil)
 }
 
 // callFrom is call with a chosen client IP (empty keeps httptest's default).
 func callFrom(t *testing.T, ip, method, path string, body interface{}, token string) resp {
+	t.Helper()
+	return send(t, ip, method, path, body, token, nil)
+}
+
+// callWith is call with extra request headers (Origin, Cookie, X-Session-Transport...).
+func callWith(t *testing.T, method, path string, body interface{}, token string, headers map[string]string) resp {
+	t.Helper()
+	return send(t, "", method, path, body, token, headers)
+}
+
+// send performs a request against the test handler from client ip with extra headers.
+func send(t *testing.T, ip, method, path string, body interface{}, token string, headers map[string]string) resp {
 	t.Helper()
 	var rdr *bytes.Reader
 	if body != nil {
@@ -93,6 +105,9 @@ func callFrom(t *testing.T, ip, method, path string, body interface{}, token str
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

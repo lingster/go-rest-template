@@ -64,7 +64,12 @@ PUBLIC_API_URL=https://api.example.com npm run build
    ```
 
 4. On the backend set `FRONTEND_URL` and `CORS_ALLOWED_ORIGINS` to the deployed webapp origin
-   (e.g. `https://saas-webapp.<account>.workers.dev`) so email links and CORS work.
+   (e.g. `https://app.example.com`) so email links, CORS and the refresh cookie's origin check work.
+5. Keep the webapp and API **same-site**: the session's refresh token is an HttpOnly cookie set by the API, and
+   browsers block it as a third-party cookie when the two are on different sites. `app.example.com` +
+   `api.example.com` works; `saas-webapp.<account>.workers.dev` + `api.example.com` does not. In that case attach a
+   custom domain to the Worker, or route the API through the webapp's origin (e.g. a Cloudflare route
+   `app.example.com/api/*` to the API) and build with `PUBLIC_API_URL=https://app.example.com`.
 
 `npm run preview:cf` runs the built Worker locally (the CSP header is applied exactly as in production).
 
@@ -93,7 +98,7 @@ src/
       types.ts         contract types
       auth.ts me.ts admin.ts   one function per endpoint
     stores/
-      session.svelte.ts  rune-based auth state (access token in memory, refresh token in localStorage)
+      session.svelte.ts  rune-based auth state (access token in memory, refresh token in an HttpOnly cookie)
       mfa.svelte.ts      pending MFA challenge between /login and /login/2fa
     passkeys.ts        WebAuthn ceremonies (login + registration)
     forms.ts           error/validation helpers, safe redirect
@@ -113,19 +118,23 @@ render client-side only. The landing page is server-rendered. Guards live in `Ap
 restores the session (refresh token -> `/me`), redirects anonymous users to `/login?redirect=...`, and
 sends non-admins away from `(admin)`.
 
-### Token storage trade-off
+### Token storage
 
-The access token (short lived) is kept in memory only. The refresh token is stored in `localStorage`
-so a reload keeps you signed in. `localStorage` is readable by any script running on the origin, so an
-XSS bug could steal the refresh token; the strict CSP (no inline scripts, no third-party origins) is
-the main mitigation, and the backend rotates refresh tokens on every use and revokes the whole family
-on reuse. The more robust alternative is an HttpOnly, SameSite cookie set by the API, which would need a
-backend contract change.
+The access token (short lived) is kept in memory only. The refresh token never reaches JavaScript: the
+client sends `X-Session-Transport: cookie` with `credentials: 'include'` on every request, so the API
+sets it as an `HttpOnly; Secure; SameSite=Strict` cookie scoped to `/api/v1/auth` and leaves it out of
+the JSON. A reload restores the session by calling `/auth/refresh` (the cookie is sent automatically);
+a failure means signed out. Sessions stored in `localStorage` by older builds are migrated once on load
+(the stored token is sent in the body, the API answers with the cookie, the key is deleted).
+
+An XSS bug can no longer steal the refresh token, but it can still act as the user while the page is
+open, so the strict CSP (no inline scripts, no third-party origins) still matters. See
+[`docs/SECURITY.md`](../docs/SECURITY.md) for the CSRF defence and the same-site requirement.
 
 ### Refresh flow
 
 On a 401 with code `unauthorized`/`token_expired` the client calls `/auth/refresh` once (concurrent
-requests share the same in-flight refresh, because refresh tokens rotate), stores the new tokens and
+requests share the same in-flight refresh, because refresh tokens rotate), keeps the new access token and
 retries the original request. If refreshing fails the session is cleared and the user is sent to
 `/login` by the guard.
 

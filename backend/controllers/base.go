@@ -115,5 +115,22 @@ func (b *BaseController) loginReply(res *services.LoginResult, err error) {
 		b.OK(res.Challenge)
 		return
 	}
+	b.deliverRefreshToken(&res.Auth.Tokens)
 	b.OK(res.Auth)
+}
+
+// refreshCookie is the webapp's HttpOnly refresh-token cookie as configured.
+func (b *BaseController) refreshCookie() httpx.RefreshCookie {
+	cfg := b.C.Cfg
+	return httpx.RefreshCookie{Secure: cfg.CookieSecure, Domain: cfg.CookieDomain, TTL: cfg.RefreshTokenTTL}
+}
+
+// deliverRefreshToken moves the refresh token from the JSON body into the HttpOnly cookie when the
+// client asked for the cookie session transport; body-token clients (mobile) are left unchanged.
+func (b *BaseController) deliverRefreshToken(t *dto.Tokens) {
+	if !httpx.WantsCookieSession(b.Ctx.Request) {
+		return
+	}
+	b.refreshCookie().Set(b.Ctx.ResponseWriter, t.RefreshToken)
+	t.RefreshToken = ""
 }

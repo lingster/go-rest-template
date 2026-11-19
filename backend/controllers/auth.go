@@ -3,7 +3,9 @@ package controllers
 import (
 	"net/http"
 
+	"github.com/lingster/go-rest-template/backend/apperr"
 	"github.com/lingster/go-rest-template/backend/dto"
+	"github.com/lingster/go-rest-template/backend/httpx"
 )
 
 // AuthController handles public authentication endpoints.
@@ -33,6 +35,7 @@ func (c *AuthController) Register() {
 // Login authenticates with email and password
 // @Title Login
 // @Description Returns an AuthResponse, or an MfaChallenge (mfa_required=true) when 2FA is enabled.
+// @Param	X-Session-Transport	header	string	false	"cookie: set the refresh token as an HttpOnly cookie and omit it from the body"
 // @Param	body	body	dto.LoginRequest	true	"Credentials"
 // @Success 200 {object} dto.AuthResponse
 // @Failure 401 invalid_credentials
@@ -60,6 +63,7 @@ func (c *AuthController) Providers() {
 // LoginGoogle signs in with a Google ID token
 // @Title LoginGoogle
 // @Description Verifies a Google ID token server-side. Creates the account, or links it to an existing account with the same email only when Google is authoritative for that address (gmail.com/googlemail.com, or the token's hosted domain claim equals the email domain); otherwise 409 account_exists_sign_in_required. Returns an AuthResponse, or an MfaChallenge (mfa_required=true) when TOTP is enabled: Google never bypasses 2FA. Disabled (404 google_signin_disabled) unless GOOGLE_CLIENT_IDS is set.
+// @Param	X-Session-Transport	header	string	false	"cookie: set the refresh token as an HttpOnly cookie and omit it from the body"
 // @Param	body	body	dto.GoogleLoginRequest	true	"Google ID token"
 // @Success 200 {object} dto.AuthResponse
 // @Failure 401 invalid_token
@@ -80,6 +84,7 @@ func (c *AuthController) LoginGoogle() {
 // LoginMFA completes a 2FA login
 // @Title LoginMFA
 // @Description Exchange the mfa_token plus a TOTP or recovery code for a session.
+// @Param	X-Session-Transport	header	string	false	"cookie: set the refresh token as an HttpOnly cookie and omit it from the body"
 // @Param	body	body	dto.MFALoginRequest	true	"MFA token and code"
 // @Success 200 {object} dto.AuthResponse
 // @Failure 401 invalid_mfa_code, invalid_token or token_expired
@@ -95,39 +100,86 @@ func (c *AuthController) LoginMFA() {
 
 // Refresh rotates the refresh token
 // @Title Refresh
-// @Description Rotating refresh; re-using a revoked token revokes the whole token family.
-// @Param	body	body	dto.RefreshRequest	true	"Refresh token"
+// @Description Rotating refresh; re-using a revoked token revokes the whole token family. Webapp clients send X-Session-Transport: cookie and no body: the token is read from, and the rotated one written to, the HttpOnly refresh cookie (a failed refresh clears it).
+// @Param	X-Session-Transport	header	string	false	"cookie: refresh token travels in the HttpOnly cookie instead of the body"
+// @Param	body	body	dto.RefreshRequest	false	"Refresh token (omit when using the cookie)"
 // @Success 200 {object} dto.Tokens
 // @Failure 401 invalid_token or token_expired
+// @Failure 403 forbidden: cookie request without X-Session-Transport or from a disallowed Origin
+// @Failure 422 validation_error: no refresh token in the body or cookie
 // @router /refresh [post]
 func (c *AuthController) Refresh() {
-	var req dto.RefreshRequest
-	if !c.Decode(&req) {
+	token, fromCookie, ok := c.presentedRefreshToken()
+	if !ok {
 		return
 	}
-	tokens, err := c.C.Auth.Refresh(c.ReqContext(), req.RefreshToken)
+	tokens, err := c.C.Auth.Refresh(c.ReqContext(), token)
 	if err != nil {
+		if fromCookie && apperr.As(err).Status < http.StatusInternalServerError {
+			c.refreshCookie().Clear(c.Ctx.ResponseWriter)
+		}
 		c.Fail(err)
 		return
 	}
+	c.deliverRefreshToken(tokens)
 	c.OK(tokens)
 }
 
 // Logout revokes a refresh token
 // @Title Logout
-// @Param	body	body	dto.RefreshRequest	true	"Refresh token to revoke"
+// @Description Idempotent. With X-Session-Transport: cookie the refresh cookie is revoked (when no body token is given) and cleared.
+// @Param	X-Session-Transport	header	string	false	"cookie: revoke and clear the HttpOnly refresh cookie"
+// @Param	body	body	dto.RefreshRequest	false	"Refresh token to revoke (omit when using the cookie)"
 // @Success 204 no content
+// @Failure 403 forbidden: cookie request without X-Session-Transport or from a disallowed Origin
+// @Failure 422 validation_error: no refresh token in the body or cookie
 // @router /logout [post]
 func (c *AuthController) Logout() {
-	var req dto.RefreshRequest
-	if !c.Decode(&req) {
+	token, _, ok := c.presentedRefreshToken()
+	if !ok {
 		return
 	}
-	if err := c.C.Auth.Logout(c.ReqContext(), req.RefreshToken); err != nil {
+	if err := c.C.Auth.Logout(c.ReqContext(), token); err != nil {
 		c.Fail(err)
 		return
 	}
+	if httpx.WantsCookieSession(c.Ctx.Request) {
+		c.refreshCookie().Clear(c.Ctx.ResponseWriter)
+	}
 	c.NoContent()
+}
+
+// refreshBody decodes an optional refresh token; it is validated after the cookie fallback.
+type refreshBody struct{ dto.RefreshRequest }
+
+func (refreshBody) Validate() map[string]string { return nil }
+
+// presentedRefreshToken returns the refresh token from the JSON body or, failing that, from the
+// refresh cookie after the CSRF check. A cookie-transport client without a cookie gets "" (no session),
+// which the services reject (refresh) or ignore (logout). ok=false means an error was written.
+func (c *AuthController) presentedRefreshToken() (token string, fromCookie, ok bool) {
+	var body refreshBody
+	if !c.DecodeOptional(&body) {
+		return "", false, false
+	}
+	problems := body.RefreshRequest.Validate()
+	if len(problems) == 0 {
+		return body.RefreshToken, false, true
+	}
+	r := c.Ctx.Request
+	if raw := c.refreshCookie().Read(r); raw != "" {
+		if err := httpx.CheckCookieRequest(r, httpx.NewOrigins(c.C.Cfg.CORSAllowedOrigins)); err != nil {
+			c.Fail(err)
+			return "", false, false
+		}
+		return raw, true, true
+	}
+	if httpx.WantsCookieSession(r) {
+		// Nothing to clear: a Set-Cookie here could wipe the cookie of a concurrent login.
+		return "", false, true
+	}
+	c.Fail(apperr.Validation(problems))
+	return "", false, false
 }
 
 // VerifyEmail confirms an email address
@@ -220,6 +272,7 @@ func (c *AuthController) PasskeyLoginBegin() {
 // PasskeyLoginFinish completes a passkey login ceremony
 // @Title PasskeyLoginFinish
 // @Description A successful passkey login satisfies MFA.
+// @Param	X-Session-Transport	header	string	false	"cookie: set the refresh token as an HttpOnly cookie and omit it from the body"
 // @Param	body	body	dto.PasskeyFinishRequest	true	"Session and credential"
 // @Success 200 {object} dto.AuthResponse
 // @Failure 401 invalid_credentials

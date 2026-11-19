@@ -28,7 +28,7 @@ type User struct {
 // Tokens is an access/refresh token pair.
 type Tokens struct {
 	AccessToken  string `json:"access_token" description:"HS256 JWT"`
-	RefreshToken string `json:"refresh_token" description:"Opaque rotating refresh token"`
+	RefreshToken string `json:"refresh_token,omitempty" description:"Opaque rotating refresh token; omitted (sent as an HttpOnly cookie) when the request has X-Session-Transport: cookie"`
 	TokenType    string `json:"token_type" example:"Bearer"`
 	ExpiresIn    int    `json:"expires_in" description:"Access token lifetime in seconds" example:"900"`
 }
@@ -165,7 +165,7 @@ type MFALoginRequest struct {
 
 // RefreshRequest exchanges / revokes a refresh token.
 type RefreshRequest struct {
-	RefreshToken string `json:"refresh_token" required:"true"`
+	RefreshToken string `json:"refresh_token" description:"Required unless the refresh cookie is sent (X-Session-Transport: cookie)"`
 }
 
 // TokenRequest carries a one-time token.
