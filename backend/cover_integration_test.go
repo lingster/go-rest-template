@@ -522,6 +522,194 @@ func TestCoverConcurrentSignInsOnlyOneWins(t *testing.T) {
 	}
 }
 
+// parallel runs fns at once (released together by a barrier) and returns their results in order.
+func parallel(fns ...func() resp) []resp {
+	out := make([]resp, len(fns))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, fn := range fns {
+		wg.Add(1)
+		go func(i int, fn func() resp) {
+			defer wg.Done()
+			<-start
+			out[i] = fn()
+		}(i, fn)
+	}
+	close(start)
+	wg.Wait()
+	return out
+}
+
+// signInLog returns the log events of a booking, newest first, and whether its latest sign-in is not
+// withdrawn.
+func signInLog(t *testing.T, token, bookingID string) (events []map[string]interface{}, signedIn bool) {
+	t.Helper()
+	log := call(t, "GET", "/api/v1/cover/sign-ins?date="+coverDate, nil, token)
+	expect(t, log, 200, "")
+	for _, it := range log.Body["items"].([]interface{}) {
+		if m := it.(map[string]interface{}); m["booking_id"] == bookingID {
+			events = append(events, m)
+		}
+	}
+	if len(events) > 0 {
+		signedIn = events[0]["type"] == "signin" // events alternate, so the newest decides
+	}
+	return events, signedIn
+}
+
+// A sign-in and a booking change that both read "confirmed, not signed in" must never both be applied
+// to that state: the booking version compare-and-set lets exactly one of them win.
+func TestCoverSignInRacesBookingChange(t *testing.T) {
+	setCoverClock(t, "08:10")
+	f := newCoverFixture(t)
+	agencyID, _ := createAgency(t, f.manager)
+	teacherB := createTeacher(t, f.manager, agencyID, "Beatrice Reassigned", true)
+	signIn := func(id string) func() resp {
+		return func() resp {
+			return call(t, "POST", "/api/v1/cover/bookings/"+id+"/sign-in", map[string]bool{"photo_id_checked": true}, f.reception)
+		}
+	}
+	patch := func(id string, body map[string]string) func() resp {
+		return func() resp { return call(t, "PATCH", "/api/v1/cover/bookings/"+id, body, f.manager) }
+	}
+	const rounds = 20
+
+	t.Run("cancel", func(t *testing.T) {
+		for i := 0; i < rounds; i++ {
+			teacherA := createTeacher(t, f.manager, agencyID, "Alan Original", true)
+			id := createBooking(t, f.manager, agencyID, coverDate, teacherA)
+			res := parallel(signIn(id), patch(id, map[string]string{"status": "cancelled"}))
+			signed, cancelled := res[0].Status == 201, res[1].Status == 200
+			if signed == cancelled {
+				t.Fatalf("round %d: sign-in %d (%s) and cancel %d (%s): exactly one must win", i, res[0].Status, res[0].Raw, res[1].Status, res[1].Raw)
+			}
+			loser := res[1]
+			if cancelled {
+				loser = res[0]
+			}
+			expect(t, loser, 409, "conflict")
+			_, signedIn := signInLog(t, f.reception, id)
+			if signedIn != signed {
+				t.Fatalf("round %d: log says signed in=%v, sign-in response says %v", i, signedIn, signed)
+			}
+			if cancelled { // a cancelled booking has no sign-in at all
+				if events, _ := signInLog(t, f.reception, id); len(events) != 0 {
+					t.Fatalf("round %d: cancelled booking has log entries: %v", i, events)
+				}
+			}
+		}
+	})
+
+	t.Run("reassign", func(t *testing.T) {
+		for i := 0; i < rounds; i++ {
+			teacherA := createTeacher(t, f.manager, agencyID, "Alan Original", true)
+			id := createBooking(t, f.manager, agencyID, coverDate, teacherA)
+			res := parallel(signIn(id), patch(id, map[string]string{"status": "confirmed", "supply_teacher_id": teacherB}))
+			signed, reassigned := res[0].Status == 201, res[1].Status == 200
+			if !signed && !reassigned {
+				t.Fatalf("round %d: neither won: %s / %s", i, res[0].Raw, res[1].Raw)
+			}
+			if !signed {
+				expect(t, res[0], 409, "conflict")
+			}
+			if !reassigned {
+				expect(t, res[1], 409, "conflict")
+			}
+			events, signedIn := signInLog(t, f.reception, id)
+			if signedIn != signed {
+				t.Fatalf("round %d: log says signed in=%v, sign-in response says %v", i, signedIn, signed)
+			}
+			if signed && reassigned {
+				// Only possible as reassign-then-sign-in: the sign-in must be for the new teacher.
+				if events[0]["supply_teacher_id"] != teacherB || events[0]["teacher_name"] != "Beatrice Reassigned" {
+					t.Fatalf("round %d: sign-in recorded for the wrong teacher: %v", i, events[0])
+				}
+			}
+			if signed && !reassigned && events[0]["supply_teacher_id"] != teacherA {
+				t.Fatalf("round %d: sign-in recorded for the wrong teacher: %v", i, events[0])
+			}
+			// A booking never carries an active sign-in of a teacher it no longer has.
+			if signedIn {
+				today := call(t, "GET", "/api/v1/cover/today", nil, f.reception)
+				if row := findByBooking(t, today, "arrivals", id); row["teacher_name"] != events[0]["teacher_name"] {
+					t.Fatalf("round %d: booking shows %v but %v is signed in", i, row["teacher_name"], events[0]["teacher_name"])
+				}
+			}
+		}
+	})
+}
+
+// Each log entry shows the teacher it was recorded for, even after the booking is reassigned.
+func TestCoverSignInLogKeepsTeacherSnapshot(t *testing.T) {
+	setCoverClock(t, "08:10")
+	f := newCoverFixture(t)
+	agencyID, _ := createAgency(t, f.manager)
+	teacherA := createTeacher(t, f.manager, agencyID, "Alice Anders", true)
+	teacherB := createTeacher(t, f.manager, agencyID, "Bernard Brook", true)
+	id := createBooking(t, f.manager, agencyID, coverDate, teacherA)
+	signIn := func() resp {
+		return call(t, "POST", "/api/v1/cover/bookings/"+id+"/sign-in", map[string]bool{"photo_id_checked": true}, f.reception)
+	}
+
+	first := signIn()
+	expect(t, first, 201, "")
+	coverClock.Advance(time.Minute)
+	corr := call(t, "POST", "/api/v1/cover/sign-ins/"+first.str("id")+"/corrections", map[string]string{"reason": "wrong_person"}, f.reception)
+	expect(t, corr, 201, "")
+	coverClock.Advance(time.Minute)
+	expect(t, call(t, "PATCH", "/api/v1/cover/bookings/"+id, map[string]string{"status": "confirmed", "supply_teacher_id": teacherB}, f.manager), 200, "")
+	coverClock.Advance(time.Minute)
+	second := signIn()
+	expect(t, second, 201, "")
+
+	for _, tok := range []string{f.reception, f.manager} {
+		events, signedIn := signInLog(t, tok, id)
+		if !signedIn || len(events) != 3 {
+			t.Fatalf("log = %v", events)
+		}
+		for i, want := range []struct{ id, teacherID, name string }{
+			{second.str("id"), teacherB, "Bernard Brook"}, // newest first
+			{corr.str("id"), teacherA, "Alice Anders"},
+			{first.str("id"), teacherA, "Alice Anders"},
+		} {
+			if events[i]["id"] != want.id || events[i]["supply_teacher_id"] != want.teacherID || events[i]["teacher_name"] != want.name {
+				t.Errorf("event %d = %v, want %+v", i, events[i], want)
+			}
+		}
+	}
+	if first.str("teacher_name") != "Alice Anders" || corr.str("teacher_name") != "Alice Anders" || second.str("teacher_name") != "Bernard Brook" {
+		t.Errorf("responses: %s / %s / %s", first.Raw, corr.Raw, second.Raw)
+	}
+}
+
+// The per-booking ETA limits are enforced by the database: of many simultaneous reports exactly one is stored.
+func TestAgencyConcurrentETAsOnlyOneWins(t *testing.T) {
+	setCoverClock(t, "08:00")
+	f := newCoverFixture(t)
+	id, key := confirmedBooking(t, f.manager, true)
+	const n = 8
+	fns := make([]func() resp, n)
+	for i := range fns {
+		fns[i] = func() resp {
+			return agencyCall(t, "POST", "/api/v1/agency/bookings/"+id+"/eta", map[string]string{"eta": "08:20"}, key)
+		}
+	}
+	created := 0
+	for _, r := range parallel(fns...) {
+		switch r.Status {
+		case 201:
+			created++
+		case 429:
+			expect(t, r, 429, "rate_limited")
+		default:
+			t.Errorf("unexpected response %d: %s", r.Status, r.Raw)
+		}
+	}
+	if created != 1 {
+		t.Fatalf("%d concurrent ETA reports were accepted", created)
+	}
+}
+
 func TestAdminCanAssignCoverRoles(t *testing.T) {
 	admin := adminToken(t)
 	email, _, _ := newVerifiedUser(t, "roles")

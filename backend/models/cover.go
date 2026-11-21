@@ -67,6 +67,10 @@ func (*SupplyTeacher) TableName() string { return "supply_teachers" }
 
 // Booking is a request to an agency to cover an absent member of staff on one school day.
 // Only its status/assignment fields change after creation (see repositories.BookingRepository).
+//
+// Version is the optimistic-concurrency token: every change to the booking, and every append to its
+// sign-in log, increments it with a compare-and-set, so two operations that both read the same state
+// can never both be applied.
 type Booking struct {
 	ID              string    `orm:"column(id);pk;size(36)"`
 	AgencyID        string    `orm:"column(agency_id);size(36);index"`
@@ -78,6 +82,7 @@ type Booking struct {
 	Status          string    `orm:"column(status);size(16)"`
 	ExpectedArrival time.Time `orm:"column(expected_arrival);type(datetime)"` // UTC
 	Lanyard         string    `orm:"column(lanyard);size(16)"`
+	Version         int64     `orm:"column(version)"`
 	CreatedAt       time.Time `orm:"column(created_at);type(datetime)"`
 	UpdatedAt       time.Time `orm:"column(updated_at);type(datetime)"`
 }
@@ -97,9 +102,13 @@ type BookingLesson struct {
 func (*BookingLesson) TableName() string { return "booking_lessons" }
 
 // EtaUpdate is an append-only arrival estimate reported by an agency. It holds an ETA only, never a location.
+//
+// Seq is the number of earlier updates for the booking and (booking_id, seq) is unique: two concurrent
+// reports computed from the same earlier updates collide, so the per-booking limits are enforced atomically.
 type EtaUpdate struct {
 	ID         string    `orm:"column(id);pk;size(36)"`
 	BookingID  string    `orm:"column(booking_id);size(36);index"`
+	Seq        int       `orm:"column(seq)"`
 	AgencyID   string    `orm:"column(agency_id);size(36)"`
 	ReportedAt time.Time `orm:"column(reported_at);type(datetime)"` // server receive time
 	ETA        time.Time `orm:"column(eta);type(datetime)"`
@@ -109,24 +118,33 @@ type EtaUpdate struct {
 
 func (*EtaUpdate) TableName() string { return "eta_updates" }
 
+// TableUnique makes (booking_id, seq) unique: the concurrency guard of the ETA limits.
+func (*EtaUpdate) TableUnique() [][]string { return [][]string{{"BookingID", "Seq"}} }
+
 // SignInEvent is an entry in the append-only reception sign-in log. A correction withdraws the
 // sign-in it references (RefID); entries are never edited or removed.
 //
 // Per booking the events strictly alternate (signin, correction, signin, ...), so Seq is the number of
 // earlier events for the booking. (booking_id, seq) is unique: two concurrent appends computed from the
 // same state (a double sign-in, or two corrections of one sign-in) collide and only one is stored.
+//
+// SupplyTeacherID and TeacherName snapshot the teacher the booking had when the event was appended (a
+// correction copies them from the sign-in it withdraws), so the log keeps showing who was signed in even
+// after the booking is reassigned.
 type SignInEvent struct {
-	ID             string    `orm:"column(id);pk;size(36)"`
-	BookingID      string    `orm:"column(booking_id);size(36);index"`
-	Seq            int       `orm:"column(seq)"`
-	Type           string    `orm:"column(type);size(16)"`
-	RefID          string    `orm:"column(ref_id);size(36)"`
-	At             time.Time `orm:"column(at);type(datetime);index"`
-	ActorUserID    string    `orm:"column(actor_user_id);size(36)"`
-	Lanyard        string    `orm:"column(lanyard);size(16)"`
-	PhotoIDChecked bool      `orm:"column(photo_id_checked)"`
-	DBSEvidence    string    `orm:"column(dbs_evidence);size(32)"`
-	Reason         string    `orm:"column(reason);size(32)"`
+	ID              string    `orm:"column(id);pk;size(36)"`
+	BookingID       string    `orm:"column(booking_id);size(36);index"`
+	Seq             int       `orm:"column(seq)"`
+	Type            string    `orm:"column(type);size(16)"`
+	RefID           string    `orm:"column(ref_id);size(36)"`
+	SupplyTeacherID string    `orm:"column(supply_teacher_id);size(36)"`
+	TeacherName     string    `orm:"column(teacher_name);size(255)"`
+	At              time.Time `orm:"column(at);type(datetime);index"`
+	ActorUserID     string    `orm:"column(actor_user_id);size(36)"`
+	Lanyard         string    `orm:"column(lanyard);size(16)"`
+	PhotoIDChecked  bool      `orm:"column(photo_id_checked)"`
+	DBSEvidence     string    `orm:"column(dbs_evidence);size(32)"`
+	Reason          string    `orm:"column(reason);size(32)"`
 }
 
 func (*SignInEvent) TableName() string { return "sign_in_events" }

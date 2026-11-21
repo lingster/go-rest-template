@@ -44,7 +44,9 @@ func (d SchoolDay) CheckETA(date string, eta, now time.Time) map[string]string {
 }
 
 // CheckETARate enforces the per-booking cap given the booking's earlier updates: at most one per
-// ETAMinInterval and ETAMaxPerBooking in total (a booking spans one day).
+// ETAMinInterval and ETAMaxPerBooking in total (a booking spans one day). The next update's seq is
+// len(prior), so the total cap is seq < ETAMaxPerBooking. Racing reports computed from the same prior
+// updates get the same seq and the unique (booking_id, seq) index lets only one through (see ReportETA).
 func CheckETARate(prior []*models.EtaUpdate, now time.Time) error {
 	if len(prior) >= ETAMaxPerBooking {
 		return apperr.RateLimited()
@@ -121,9 +123,11 @@ func (s *AgencyPortalService) ReportETA(_ context.Context, agency *models.Agency
 	if err := CheckETARate(a.ETAs, now); err != nil {
 		return nil, err // not audited: a chatty integration would flood the log
 	}
-	u := &models.EtaUpdate{ID: NewID(), BookingID: b.ID, AgencyID: agency.ID, ReportedAt: now, ETA: eta,
+	u := &models.EtaUpdate{ID: NewID(), BookingID: b.ID, Seq: len(a.ETAs), AgencyID: agency.ID, ReportedAt: now, ETA: eta,
 		Note: dto.CleanText(req.Note), CreatedAt: now}
-	if err := s.Repos.EtaUpdates.Create(u); err != nil {
+	if err := s.Repos.EtaUpdates.Create(u); errors.Is(err, repositories.ErrDuplicate) {
+		return nil, apperr.RateLimited() // another report for this booking won the race for this seq
+	} else if err != nil {
 		return nil, err
 	}
 	return &dto.EtaUpdate{ID: u.ID, BookingID: b.ID, ETA: formatTime(u.ETA), ReportedAt: formatTime(u.ReportedAt), Note: u.Note}, nil

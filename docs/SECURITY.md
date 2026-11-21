@@ -152,17 +152,28 @@
   by a correction (fixed reasons) that references it; the original stays visible. Each entry records the server time,
   the signed-in user who acted, the lanyard and the DBS evidence; photo ID must be confirmed, and a DBS certificate must
   be seen when the agency has not attested an enhanced DBS check. Sign-ins and corrections are also audited.
-- **Sign-in concurrency.** A booking's events strictly alternate (sign-in, correction, sign-in, ...), so each event's
-  `seq` is the number of earlier events and `(booking_id, seq)` has a unique index. Two simultaneous sign-ins (or two
-  corrections of one sign-in) compute the same `seq`; the database accepts one and the other gets 409. This is an
-  optimistic, append-only guard that works the same on SQLite and Postgres, needs no row locks or mutable "current
-  sign-in" column, and also gives a deterministic log order. Booking status changes use a compare-and-set on the
-  previous status.
+- **Sign-in concurrency.** `bookings.version` is an optimistic-concurrency token. Every booking mutation (status,
+  teacher assignment, covering, lanyard, lessons) and every sign-in log append (sign-in or correction) runs, in ONE
+  database transaction, `UPDATE bookings SET version = version + 1 ... WHERE id = ? AND version = ?` (a sign-in also
+  requires `status = confirmed` and the teacher it validated against) followed by its inserts; lessons are replaced in
+  that same transaction. If the compare-and-set matches no row the operation is rolled back and gets 409, so a
+  sign-in and a cancel or reassignment that both read "confirmed, not signed in" can never both be applied. A booking's
+  events also strictly alternate (sign-in, correction, sign-in, ...), so each event's `seq` is the number of earlier
+  events and `(booking_id, seq)` has a unique index: a second guard (and deterministic log order) that makes two
+  simultaneous sign-ins or two corrections of one sign-in lose with 409. The mechanism needs no row locks or mutable
+  "current sign-in" column and works the same on SQLite and Postgres.
+- **Teacher snapshot on log events.** Each sign-in and correction stores the `supply_teacher_id` and `teacher_name`
+  the booking had when it was appended (a correction copies them from the sign-in it withdraws), and the log is shown
+  from those stored values, never the booking's current teacher. Reassigning a booking later therefore cannot rewrite
+  who was recorded as signed in.
 - **ETA only, no location.** Agencies report an expected arrival time and an optional note, never a location. The
   receive time is the server's clock (a client timestamp is never trusted), ETAs outside 06:00–16:00 school time on the
   booking date or more than 10 minutes in the past are rejected, notes are capped at 120 characters with control and
   format characters (newlines, bidi overrides, zero-width) removed, and each booking accepts at most one update per 30 s
-  and 100 in total. Rate-limited reports are not audited (noise); accepted ones are their own append-only table.
+  and 100 in total. The limits are atomic: every update carries a `seq` (the number of earlier updates) with a unique
+  `(booking_id, seq)` index, so simultaneous reports computed from the same earlier updates collide, the loser gets
+  429, and neither the cap (`seq < 100`) nor the 30 s interval can be beaten by racing requests. Rate-limited reports
+  are not audited (noise); accepted ones are their own append-only table.
 - **Data minimisation for reception.** Reception sees the teacher's name, the agency's name and phone, times, status,
   lanyard and whether a DBS certificate must be checked, which is what the front desk needs; not who is absent, what
   is taught or where.

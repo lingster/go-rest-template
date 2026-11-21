@@ -14,6 +14,10 @@ var ErrNotFound = errors.New("record not found")
 // ErrDuplicate is returned when a unique constraint is violated.
 var ErrDuplicate = errors.New("duplicate record")
 
+// ErrVersionConflict is returned when a booking's version (or the status/teacher a sign-in was validated
+// against) is no longer what the caller read: the booking changed meanwhile and nothing was written.
+var ErrVersionConflict = errors.New("booking changed meanwhile")
+
 // UserStats are aggregate counters for the admin dashboard.
 type UserStats struct {
 	Total, Active, Verified, TwoFA int64
@@ -118,25 +122,37 @@ type SupplyTeacherRepository interface {
 	GetMany(ids []string) (map[string]*models.SupplyTeacher, error)
 }
 
+// BookingCheck is the state of a booking an operation was based on. Every booking mutation and every
+// sign-in log append runs a compare-and-set against it, in the same transaction as its writes.
+type BookingCheck struct {
+	// Version is the booking version that was read (required).
+	Version int64
+	// Status and SupplyTeacherID, when not empty, must also still match (a sign-in is only valid for a
+	// confirmed booking and the teacher it was validated against).
+	Status          string
+	SupplyTeacherID string
+}
+
 // BookingRepository persists bookings. Agency, date, kind, subject and expected arrival are fixed at
-// creation; Update writes only the status/assignment fields.
+// creation; UpdateIf writes only the status/assignment fields.
 type BookingRepository interface {
 	// Create stores the booking and its lessons atomically.
 	Create(b *models.Booking, lessons []*models.BookingLesson) error
 	GetByID(id string) (*models.Booking, error)
 	// ListByDates returns the bookings dated from..to inclusive (YYYY-MM-DD), optionally for one agency.
 	ListByDates(from, to, agencyID string) ([]*models.Booking, error)
-	// Update writes status, supply_teacher_id, covering, lanyard and updated_at iff the stored status is
-	// still fromStatus (optimistic concurrency); false means it changed meanwhile.
-	Update(b *models.Booking, fromStatus string) (bool, error)
-	// ReplaceLessons swaps the booking's lessons atomically.
-	ReplaceLessons(bookingID string, lessons []*models.BookingLesson) error
+	// UpdateIf writes the named columns of b (default: status, supply_teacher_id, covering, lanyard,
+	// updated_at) and increments the version iff the stored version is still expectedVersion, replacing the
+	// booking's lessons in the same transaction when lessons is not nil. It returns ErrVersionConflict, having
+	// written nothing, when the booking changed meanwhile. On success b.Version is the new version.
+	UpdateIf(b *models.Booking, expectedVersion int64, lessons []*models.BookingLesson, cols ...string) error
 	// LessonsByBookings returns lessons keyed by booking id.
 	LessonsByBookings(ids []string) (map[string][]*models.BookingLesson, error)
 }
 
 // EtaUpdateRepository is append-only: there is deliberately no update or delete.
 type EtaUpdateRepository interface {
+	// Create returns ErrDuplicate when (booking_id, seq) is taken: a concurrent report won.
 	Create(u *models.EtaUpdate) error
 	// ListByBookings returns updates keyed by booking id, oldest first.
 	ListByBookings(ids []string) (map[string][]*models.EtaUpdate, error)
@@ -144,8 +160,11 @@ type EtaUpdateRepository interface {
 
 // SignInEventRepository is the append-only safeguarding log: there is deliberately no update or delete.
 type SignInEventRepository interface {
-	// Create returns ErrDuplicate when (booking_id, seq) is taken: a concurrent conflicting event won.
-	Create(e *models.SignInEvent) error
+	// AppendIf stores e as the next event of its booking and increments the booking's version, both in one
+	// transaction, iff the booking still matches check. It returns ErrVersionConflict when the booking changed
+	// meanwhile and ErrDuplicate when (booking_id, seq) is taken (a concurrent event won); either way nothing
+	// is written.
+	AppendIf(e *models.SignInEvent, check BookingCheck) error
 	GetByID(id string) (*models.SignInEvent, error)
 	// ListByBookings returns events keyed by booking id, in seq order.
 	ListByBookings(ids []string) (map[string][]*models.SignInEvent, error)

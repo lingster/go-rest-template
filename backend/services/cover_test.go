@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lingster/go-rest-template/backend/container"
 	"github.com/lingster/go-rest-template/backend/dto"
 	"github.com/lingster/go-rest-template/backend/models"
 	"github.com/lingster/go-rest-template/backend/repositories"
@@ -414,54 +415,129 @@ func TestCleanText(t *testing.T) {
 	}
 }
 
-// The sign-in log's concurrency guard lives in the database: a second event with the same
-// (booking_id, seq), as two racing sign-ins would compute, is rejected whatever the timing.
-func TestSignInLogRejectsConflictingAppend(t *testing.T) {
-	c, _ := testutil.NewContainer(t)
-	booking := services.NewID()
-	ev := func() *models.SignInEvent {
-		return &models.SignInEvent{ID: services.NewID(), BookingID: booking, Seq: 0, Type: models.SignInTypeSignIn,
-			At: time.Now().UTC(), PhotoIDChecked: true}
-	}
-	if err := c.Repos.SignIns.Create(ev()); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Repos.SignIns.Create(ev()); !errors.Is(err, repositories.ErrDuplicate) {
-		t.Fatalf("expected ErrDuplicate, got %v", err)
-	}
-	next := ev()
-	next.Seq = 1
-	if err := c.Repos.SignIns.Create(next); err != nil {
-		t.Fatalf("next seq must append: %v", err)
-	}
-}
-
-// Booking updates are a compare-and-set on the previous status and round-trip their timestamps.
-func TestBookingUpdateIsConditional(t *testing.T) {
-	c, _ := testutil.NewContainer(t)
+func newTestBooking(t *testing.T, c *container.Container, status, teacher string) *models.Booking {
+	t.Helper()
 	created := time.Date(2026, 11, 23, 7, 0, 0, 0, time.UTC)
-	b := &models.Booking{ID: services.NewID(), AgencyID: "ag", Date: "2026-11-23", Kind: models.BookingAM,
-		Status: models.BookingRequested, ExpectedArrival: created.Add(time.Hour), CreatedAt: created, UpdatedAt: created}
+	b := &models.Booking{ID: services.NewID(), AgencyID: "ag", SupplyTeacherID: teacher, Date: "2026-11-23", Kind: models.BookingAM,
+		Status: status, ExpectedArrival: created.Add(time.Hour), CreatedAt: created, UpdatedAt: created}
 	if err := c.Repos.Bookings.Create(b, nil); err != nil {
 		t.Fatal(err)
 	}
-	b.Status, b.SupplyTeacherID, b.UpdatedAt = models.BookingConfirmed, "teacher", created.Add(90*time.Second)
-	if ok, err := c.Repos.Bookings.Update(b, models.BookingRequested); !ok || err != nil {
-		t.Fatalf("update: %v %v", ok, err)
+	return b
+}
+
+func version(t *testing.T, c *container.Container, id string) int64 {
+	t.Helper()
+	b, err := c.Repos.Bookings.GetByID(id)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if ok, err := c.Repos.Bookings.Update(b, models.BookingRequested); ok || err != nil {
-		t.Fatalf("stale status must not update: %v %v", ok, err)
+	return b.Version
+}
+
+// A sign-in append is a compare-and-set on the booking version in the same transaction as the insert: a
+// stale version, a changed status or teacher, or a taken (booking_id, seq) leaves both the log and the
+// version untouched.
+func TestSignInAppendIsGuarded(t *testing.T) {
+	c, _ := testutil.NewContainer(t)
+	b := newTestBooking(t, c, models.BookingConfirmed, "teacher")
+	ev := func(seq int) *models.SignInEvent {
+		return &models.SignInEvent{ID: services.NewID(), BookingID: b.ID, Seq: seq, Type: models.SignInTypeSignIn,
+			SupplyTeacherID: "teacher", TeacherName: "Tess", At: time.Now().UTC(), PhotoIDChecked: true}
+	}
+	check := repositories.BookingCheck{Version: 0, Status: models.BookingConfirmed, SupplyTeacherID: "teacher"}
+	if err := c.Repos.SignIns.AppendIf(ev(0), check); err != nil {
+		t.Fatal(err)
+	}
+	if v := version(t, c, b.ID); v != 1 {
+		t.Fatalf("version = %d, want 1", v)
+	}
+	// Stale version: refused, nothing stored.
+	if err := c.Repos.SignIns.AppendIf(ev(1), check); !errors.Is(err, repositories.ErrVersionConflict) {
+		t.Fatalf("stale version: expected ErrVersionConflict, got %v", err)
+	}
+	// Right version but the booking is no longer what the sign-in was validated against.
+	for name, stale := range map[string]repositories.BookingCheck{
+		"status":  {Version: 1, Status: models.BookingCancelled},
+		"teacher": {Version: 1, SupplyTeacherID: "someone-else"},
+	} {
+		if err := c.Repos.SignIns.AppendIf(ev(1), stale); !errors.Is(err, repositories.ErrVersionConflict) {
+			t.Fatalf("stale %s: expected ErrVersionConflict, got %v", name, err)
+		}
+	}
+	// The (booking_id, seq) unique index is the second guard, and its loser's version bump rolls back.
+	if err := c.Repos.SignIns.AppendIf(ev(0), repositories.BookingCheck{Version: 1}); !errors.Is(err, repositories.ErrDuplicate) {
+		t.Fatalf("expected ErrDuplicate, got %v", err)
+	}
+	if v := version(t, c, b.ID); v != 1 {
+		t.Fatalf("version after rolled-back appends = %d, want 1", v)
+	}
+	if err := c.Repos.SignIns.AppendIf(ev(1), repositories.BookingCheck{Version: 1}); err != nil {
+		t.Fatalf("next seq must append: %v", err)
+	}
+	events, err := c.Repos.SignIns.ListByBookings([]string{b.ID})
+	if err != nil || len(events[b.ID]) != 2 || events[b.ID][0].TeacherName != "Tess" {
+		t.Fatalf("log = %v %v", events[b.ID], err)
+	}
+}
+
+// Booking updates are a compare-and-set on the version (incremented on every write), replace lessons in
+// the same transaction and round-trip their timestamps.
+func TestBookingUpdateIsConditional(t *testing.T) {
+	c, _ := testutil.NewContainer(t)
+	b := newTestBooking(t, c, models.BookingRequested, "")
+	created := b.CreatedAt
+	b.Status, b.SupplyTeacherID, b.UpdatedAt = models.BookingConfirmed, "teacher", created.Add(90*time.Second)
+	lessons := []*models.BookingLesson{{ID: services.NewID(), BookingID: b.ID, Period: "P1", ClassName: "9X2", Room: "Lab 2"}}
+	if err := c.Repos.Bookings.UpdateIf(b, 0, lessons); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if b.Version != 1 {
+		t.Fatalf("version = %d, want 1", b.Version)
+	}
+	// The same (now stale) version is refused, and its lessons are not applied either.
+	stale := *b
+	stale.Status = models.BookingCancelled
+	other := []*models.BookingLesson{{ID: services.NewID(), BookingID: b.ID, Period: "P2", Free: true}}
+	if err := c.Repos.Bookings.UpdateIf(&stale, 0, other); !errors.Is(err, repositories.ErrVersionConflict) {
+		t.Fatalf("stale version must conflict, got %v", err)
+	}
+	if err := c.Repos.Bookings.UpdateIf(&stale, 0, nil, "nonsense"); err == nil {
+		t.Fatal("unknown column must be rejected")
 	}
 	got, err := c.Repos.Bookings.GetByID(b.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != models.BookingConfirmed || got.SupplyTeacherID != "teacher" ||
+	if got.Status != models.BookingConfirmed || got.SupplyTeacherID != "teacher" || got.Version != 1 ||
 		!got.UpdatedAt.Equal(b.UpdatedAt) || !got.CreatedAt.Equal(created) || !got.ExpectedArrival.Equal(b.ExpectedArrival) {
 		t.Fatalf("round trip: %+v", got)
+	}
+	ls, err := c.Repos.Bookings.LessonsByBookings([]string{b.ID})
+	if err != nil || len(ls[b.ID]) != 1 || ls[b.ID][0].Period != "P1" {
+		t.Fatalf("lessons = %v %v", ls[b.ID], err)
 	}
 	list, err := c.Repos.Bookings.ListByDates("2026-11-23", "2026-11-23", "ag")
 	if err != nil || len(list) == 0 {
 		t.Fatalf("list: %v %d", err, len(list))
+	}
+}
+
+// ETA updates are append-only with a unique (booking_id, seq): a racing report with the same seq loses.
+func TestEtaUpdateSeqIsUnique(t *testing.T) {
+	c, _ := testutil.NewContainer(t)
+	booking := services.NewID()
+	eta := func(seq int) *models.EtaUpdate {
+		return &models.EtaUpdate{ID: services.NewID(), BookingID: booking, Seq: seq, AgencyID: "ag",
+			ReportedAt: time.Now().UTC(), ETA: time.Now().UTC(), CreatedAt: time.Now().UTC()}
+	}
+	if err := c.Repos.EtaUpdates.Create(eta(0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Repos.EtaUpdates.Create(eta(0)); !errors.Is(err, repositories.ErrDuplicate) {
+		t.Fatalf("expected ErrDuplicate, got %v", err)
+	}
+	if err := c.Repos.EtaUpdates.Create(eta(1)); err != nil {
+		t.Fatalf("next seq must append: %v", err)
 	}
 }

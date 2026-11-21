@@ -1732,7 +1732,12 @@ definitions:
       ref_id:
         description: 'correction: the sign-in it withdraws'
         type: string
+      supply_teacher_id:
+        description: the teacher signed in, as recorded when the event was appended
+        type: string
       teacher_name:
+        description: as recorded when the event was appended; later reassignments
+          do not change it
         type: string
       type:
         description: signin or correction

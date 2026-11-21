@@ -168,7 +168,8 @@ P4 13:00–14:00, P5 14:00–15:00; booking kinds `full` = P1–P5, `am` = P1–
   "covering": "Mr Okafor", "subject": "Science", "status": "requested|confirmed|cancelled",
   "expected_arrival": "2026-11-23T08:15:00Z", "lanyard": "S-01", "lessons": [Lesson], "created_at": "...", "updated_at": "..." }
 // SignInEvent (append-only log entry)
-{ "id": "uuid", "booking_id": "uuid", "teacher_name": "...", "type": "signin|correction", "ref_id": "uuid (correction)",
+{ "id": "uuid", "booking_id": "uuid", "supply_teacher_id": "uuid", "teacher_name": "...", "type": "signin|correction",
+  "ref_id": "uuid (correction)",
   "at": "...", "actor_user_id": "uuid", "lanyard": "S-01", "photo_id_checked": true,
   "dbs_evidence": "agency_confirmation|certificate_seen", "reason": "wrong_person|not_on_site|checks_incomplete (correction)" }
 ```
@@ -190,7 +191,8 @@ P4 13:00–14:00, P5 14:00–15:00; booking kinds `full` = P1–P5, `am` = P1–
 - Confirm: `status: "confirmed"` with `supply_teacher_id`, which must belong to the booking's agency (422 otherwise);
   a confirmed booking can be re-assigned the same way. `supply_teacher_id` is rejected without `status: "confirmed"`.
 - Cancelled bookings are final (409 on any change). Status changes on a signed-in booking → 409 (correct the sign-in
-  first). A concurrent status change → 409. Date, kind, agency, subject and expected arrival are fixed at creation.
+  first). Any change that races another change to the same booking, or a sign-in of it, → 409 "The booking changed
+  meanwhile; reload and try again" (nothing is applied; reload and retry). Date, kind, agency, subject and expected arrival are fixed at creation.
 
 ### Reception and cover managers (Bearer, role `reception`, `cover_manager` or `admin`)
 
@@ -229,8 +231,10 @@ teacher (each unassigned booking has its own row, `teacher_name` empty). Recepti
 **Sign-in.** Only confirmed bookings dated today (school time) that are not currently signed in (409 otherwise).
 `photo_id_checked` must be true, and when the teacher's agency has not confirmed a DBS check `dbs_certificate_seen` must
 be true (422 with `details.photo_id_checked` / `details.dbs_certificate_seen`). The server records the time, the signed-in
-user, the booking's lanyard and the DBS evidence (`certificate_seen` if seen, else `agency_confirmation`). Two
-simultaneous sign-ins of one booking cannot both succeed: the loser gets 409.
+user, the booking's lanyard and the DBS evidence (`certificate_seen` if seen, else `agency_confirmation`). Each log
+entry stores the teacher it was recorded for (`supply_teacher_id`, `teacher_name`; a correction carries the teacher of
+the sign-in it withdraws) and keeps showing them after the booking is reassigned. A sign-in racing another sign-in, a
+correction, or a booking change (cancel, reassign, edit) cannot both be applied: the loser gets 409.
 
 **Corrections.** `reason` is one of `wrong_person`, `not_on_site`, `checks_incomplete`. Only the booking's current
 sign-in can be corrected (409 if already withdrawn or superseded; 404 for unknown ids or a correction's id). The
@@ -249,7 +253,8 @@ original entry stays in the log; the booking can then be signed in again. Nothin
   signed in (409). The ETA must fall within 06:00–16:00 school time on the booking date and be no more than 10 minutes
   before the server's clock (422). `reported_at` is the server's receive time. `note` is at most 120 characters after
   control/format characters are removed. At most one update per booking per 30 s and 100 per booking → 429
-  `rate_limited`. Agencies send an ETA only, never a location.
+  `rate_limited`; this is atomic, so of several simultaneous reports for one booking only one is accepted and the rest
+  get 429. Agencies send an ETA only, never a location.
 
 ## WebAuthn / passkeys
 

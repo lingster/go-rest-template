@@ -16,26 +16,23 @@ type SignInService struct{ CoverDeps }
 
 func NewSignInService(deps CoverDeps) *SignInService { return &SignInService{CoverDeps: deps} }
 
-func presentSignIn(e *models.SignInEvent, teacher string) dto.SignInEvent {
-	return dto.SignInEvent{ID: e.ID, BookingID: e.BookingID, TeacherName: teacher, Type: e.Type, RefID: e.RefID,
-		At: formatTime(e.At), ActorUserID: e.ActorUserID, Lanyard: e.Lanyard, PhotoIDChecked: e.PhotoIDChecked,
-		DBSEvidence: e.DBSEvidence, Reason: e.Reason}
+// presentSignIn shows an event from its own stored teacher snapshot, never the booking's current teacher.
+func presentSignIn(e *models.SignInEvent) dto.SignInEvent {
+	return dto.SignInEvent{ID: e.ID, BookingID: e.BookingID, SupplyTeacherID: e.SupplyTeacherID, TeacherName: e.TeacherName,
+		Type: e.Type, RefID: e.RefID, At: formatTime(e.At), ActorUserID: e.ActorUserID, Lanyard: e.Lanyard,
+		PhotoIDChecked: e.PhotoIDChecked, DBSEvidence: e.DBSEvidence, Reason: e.Reason}
 }
 
-// errConcurrentSignIn is returned when another append to the same booking won the race.
-func errConcurrentSignIn() error {
-	return apperr.Conflict("The sign-in log for this booking changed meanwhile; reload and try again")
-}
-
-// appendEvent stores e as the next event of its booking. The (booking_id, seq) unique index turns a lost
-// race into ErrDuplicate, so two concurrent appends computed from the same log can never both succeed.
-func (s *SignInService) appendEvent(e *models.SignInEvent, prior []*models.SignInEvent) error {
+// appendEvent stores e as the next event of its booking. In one transaction the booking's version is
+// compared-and-set against check (so a concurrent booking change or other append makes this one fail) and
+// the event inserted; the (booking_id, seq) unique index is a second guard. Either lost race is a 409.
+func (s *SignInService) appendEvent(e *models.SignInEvent, prior []*models.SignInEvent, check repositories.BookingCheck) error {
 	e.ID, e.Seq, e.At = NewID(), len(prior), s.Now().UTC()
-	err := s.Repos.SignIns.Create(e)
+	err := s.Repos.SignIns.AppendIf(e, check)
 	if errors.Is(err, repositories.ErrDuplicate) {
-		return errConcurrentSignIn()
+		return mapBookingConflict(repositories.ErrVersionConflict)
 	}
-	return err
+	return mapBookingConflict(err)
 }
 
 // SignIn records that reception checked photo ID (and, unless the agency confirmed an enhanced DBS check,
@@ -69,12 +66,14 @@ func (s *SignInService) SignIn(ctx context.Context, actor *models.User, bookingI
 			"dbs_certificate_seen": "the agency has not confirmed a DBS check: see the DBS certificate before sign-in"})
 	}
 	e := &models.SignInEvent{BookingID: b.ID, Type: models.SignInTypeSignIn, ActorUserID: actor.ID,
+		SupplyTeacherID: b.SupplyTeacherID, TeacherName: teacherName(a.Teacher),
 		Lanyard: b.Lanyard, PhotoIDChecked: req.PhotoIDChecked, DBSEvidence: evidence}
-	if err := s.appendEvent(e, a.SignIns); err != nil {
+	check := repositories.BookingCheck{Version: b.Version, Status: models.BookingConfirmed, SupplyTeacherID: b.SupplyTeacherID}
+	if err := s.appendEvent(e, a.SignIns, check); err != nil {
 		return nil, err
 	}
 	s.Audit.Log(ctx, AuditSignIn, "", actor.ID, map[string]string{"booking_id": b.ID, "sign_in_id": e.ID, "dbs_evidence": evidence})
-	v := presentSignIn(e, teacherName(a.Teacher))
+	v := presentSignIn(e)
 	return &v, nil
 }
 
@@ -100,14 +99,15 @@ func (s *SignInService) Correct(ctx context.Context, actor *models.User, signInI
 	if cur := CurrentSignIn(a.SignIns); cur == nil || cur.ID != ref.ID {
 		return nil, apperr.Conflict("This sign-in has already been withdrawn")
 	}
+	// The correction names the teacher who was signed in, copied from the sign-in it withdraws.
 	e := &models.SignInEvent{BookingID: b.ID, Type: models.SignInTypeCorrection, RefID: ref.ID, ActorUserID: actor.ID,
-		Reason: req.Reason}
-	if err := s.appendEvent(e, a.SignIns); err != nil {
+		SupplyTeacherID: ref.SupplyTeacherID, TeacherName: ref.TeacherName, Reason: req.Reason}
+	if err := s.appendEvent(e, a.SignIns, repositories.BookingCheck{Version: b.Version}); err != nil {
 		return nil, err
 	}
 	s.Audit.Log(ctx, AuditSignInCorrection, "", actor.ID, map[string]string{"booking_id": b.ID, "sign_in_id": ref.ID,
 		"correction_id": e.ID, "reason": req.Reason})
-	v := presentSignIn(e, teacherName(a.Teacher))
+	v := presentSignIn(e)
 	return &v, nil
 }
 
@@ -129,10 +129,8 @@ func (s *SignInService) Log(actor *models.User, date string) (*dto.SignInLog, er
 		return nil, err
 	}
 	var events []*models.SignInEvent
-	names := map[string]string{}
 	for _, a := range arrivals {
 		events = append(events, a.SignIns...)
-		names[a.Booking.ID] = teacherName(a.Teacher)
 	}
 	sort.SliceStable(events, func(i, j int) bool {
 		ei, ej := events[i], events[j]
@@ -146,7 +144,7 @@ func (s *SignInService) Log(actor *models.User, date string) (*dto.SignInLog, er
 	})
 	out := &dto.SignInLog{Date: date, Items: make([]dto.SignInEvent, len(events))}
 	for i, e := range events {
-		out.Items[i] = presentSignIn(e, names[e.BookingID])
+		out.Items[i] = presentSignIn(e)
 	}
 	return out, nil
 }

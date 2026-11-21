@@ -88,7 +88,7 @@ func (s *BookingService) Update(ctx context.Context, actor *models.User, id stri
 	if err != nil {
 		return nil, err
 	}
-	fromStatus, action := b.Status, AuditBookingUpdate
+	expectedVersion, action := b.Version, AuditBookingUpdate
 	if req.Status != nil {
 		if CurrentSignIn(a.SignIns) != nil {
 			return nil, apperr.Conflict("The teacher is signed in; correct the sign-in first")
@@ -110,17 +110,16 @@ func (s *BookingService) Update(ctx context.Context, actor *models.User, id stri
 		b.Lanyard = strings.TrimSpace(*req.Lanyard)
 	}
 	b.UpdatedAt = s.Now().UTC()
-	if ok, err := s.Repos.Bookings.Update(b, fromStatus); err != nil {
-		return nil, err
-	} else if !ok {
-		return nil, apperr.Conflict("The booking was changed meanwhile; reload and try again")
-	}
 	lessons := a.Lessons
+	var replacement []*models.BookingLesson
 	if req.Lessons != nil {
-		lessons = newLessons(b.ID, req.Lessons)
-		if err := s.Repos.Bookings.ReplaceLessons(b.ID, lessons); err != nil {
-			return nil, err
-		}
+		replacement = newLessons(b.ID, req.Lessons)
+		lessons = replacement
+	}
+	// One transaction: version compare-and-set, booking columns and lessons. A concurrent sign-in or
+	// booking change bumps the version first and this one is refused.
+	if err := s.Repos.Bookings.UpdateIf(b, expectedVersion, replacement); err != nil {
+		return nil, mapBookingConflict(err)
 	}
 	s.Audit.Log(ctx, action, "", actor.ID, map[string]string{"booking_id": b.ID, "status": b.Status,
 		"supply_teacher_id": b.SupplyTeacherID})

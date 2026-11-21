@@ -53,6 +53,15 @@ func (c CoverDeps) booking(id string) (*models.Booking, error) {
 	return b, err
 }
 
+// mapBookingConflict turns a lost version compare-and-set into the 409 every booking mutation and sign-in
+// append returns when the booking changed after it was read.
+func mapBookingConflict(err error) error {
+	if errors.Is(err, repositories.ErrVersionConflict) {
+		return apperr.Conflict("The booking changed meanwhile; reload and try again")
+	}
+	return err
+}
+
 // arrivals assembles agencies, teachers, lessons, ETA updates and sign-in events for bookings with one
 // query per table.
 func (c CoverDeps) arrivals(bookings []*models.Booking) ([]Arrival, error) {

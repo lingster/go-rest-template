@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/beego/beego/v2/client/orm"
 
@@ -131,22 +132,70 @@ func (*ormBookingRepo) ListByDates(from, to, agencyID string) ([]*models.Booking
 	return out, err
 }
 
-func (*ormBookingRepo) Update(b *models.Booking, fromStatus string) (bool, error) {
-	n, err := orm.NewOrm().QueryTable(new(models.Booking)).Filter("id", b.ID).Filter("status", fromStatus).
-		Update(orm.Params{
-			"status": b.Status, "supply_teacher_id": b.SupplyTeacherID, "covering": b.Covering,
-			"lanyard": b.Lanyard, "updated_at": b.UpdatedAt,
-		})
-	return n > 0, err
+// bookingColumns are the booking columns UpdateIf may write, with their values.
+var bookingColumns = map[string]func(*models.Booking) interface{}{
+	"status":            func(b *models.Booking) interface{} { return b.Status },
+	"supply_teacher_id": func(b *models.Booking) interface{} { return b.SupplyTeacherID },
+	"covering":          func(b *models.Booking) interface{} { return b.Covering },
+	"lanyard":           func(b *models.Booking) interface{} { return b.Lanyard },
+	"updated_at":        func(b *models.Booking) interface{} { return b.UpdatedAt },
 }
 
-func (*ormBookingRepo) ReplaceLessons(bookingID string, lessons []*models.BookingLesson) error {
-	return orm.NewOrm().DoTx(func(_ context.Context, tx orm.TxOrmer) error {
-		if _, err := tx.QueryTable(new(models.BookingLesson)).Filter("booking_id", bookingID).Delete(); err != nil {
+var defaultBookingColumns = []string{"status", "supply_teacher_id", "covering", "lanyard", "updated_at"}
+
+// casBooking is the one compare-and-set every booking mutation and sign-in append goes through: it
+// increments the booking's version (and writes set) iff the booking still matches check, else it returns
+// ErrVersionConflict. It must run inside the transaction that does the guarded writes.
+func casBooking(tx orm.TxOrmer, id string, check BookingCheck, set orm.Params) error {
+	qs := tx.QueryTable(new(models.Booking)).Filter("id", id).Filter("version", check.Version)
+	if check.Status != "" {
+		qs = qs.Filter("status", check.Status)
+	}
+	if check.SupplyTeacherID != "" {
+		qs = qs.Filter("supply_teacher_id", check.SupplyTeacherID)
+	}
+	if set == nil {
+		set = orm.Params{}
+	}
+	set["version"] = orm.ColValue(orm.ColAdd, 1)
+	n, err := qs.Update(set)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrVersionConflict
+	}
+	return nil
+}
+
+func (*ormBookingRepo) UpdateIf(b *models.Booking, expectedVersion int64, lessons []*models.BookingLesson, cols ...string) error {
+	if len(cols) == 0 {
+		cols = defaultBookingColumns
+	}
+	set := make(orm.Params, len(cols)+1)
+	for _, c := range cols {
+		value, ok := bookingColumns[c]
+		if !ok {
+			return fmt.Errorf("booking column %q cannot be updated", c)
+		}
+		set[c] = value(b)
+	}
+	err := orm.NewOrm().DoTx(func(_ context.Context, tx orm.TxOrmer) error {
+		if err := casBooking(tx, b.ID, BookingCheck{Version: expectedVersion}, set); err != nil {
+			return err
+		}
+		if lessons == nil {
+			return nil
+		}
+		if _, err := tx.QueryTable(new(models.BookingLesson)).Filter("booking_id", b.ID).Delete(); err != nil {
 			return err
 		}
 		return insertLessons(tx, lessons)
 	})
+	if err == nil {
+		b.Version = expectedVersion + 1
+	}
+	return err
 }
 
 func (*ormBookingRepo) LessonsByBookings(ids []string) (map[string][]*models.BookingLesson, error) {
@@ -178,7 +227,7 @@ func (*ormEtaRepo) ListByBookings(ids []string) (map[string][]*models.EtaUpdate,
 	}
 	var rows []*models.EtaUpdate
 	if _, err := orm.NewOrm().QueryTable(new(models.EtaUpdate)).Filter("booking_id__in", ids).
-		OrderBy("reported_at", "created_at").All(&rows); err != nil {
+		OrderBy("seq").All(&rows); err != nil {
 		return nil, err
 	}
 	for _, r := range rows {
@@ -191,7 +240,14 @@ func (*ormEtaRepo) ListByBookings(ids []string) (map[string][]*models.EtaUpdate,
 
 type ormSignInRepo struct{}
 
-func (*ormSignInRepo) Create(e *models.SignInEvent) error { return insert(e) }
+func (*ormSignInRepo) AppendIf(e *models.SignInEvent, check BookingCheck) error {
+	return orm.NewOrm().DoTx(func(_ context.Context, tx orm.TxOrmer) error {
+		if err := casBooking(tx, e.BookingID, check, nil); err != nil {
+			return err
+		}
+		return insertWith(tx, e) // a unique-index loss returns ErrDuplicate and rolls the version bump back
+	})
+}
 
 func (*ormSignInRepo) GetByID(id string) (*models.SignInEvent, error) {
 	e := &models.SignInEvent{}

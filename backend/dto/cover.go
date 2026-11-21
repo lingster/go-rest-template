@@ -179,17 +179,18 @@ type CoverWeekManager struct {
 
 // SignInEvent is one entry of the append-only sign-in log.
 type SignInEvent struct {
-	ID             string `json:"id"`
-	BookingID      string `json:"booking_id"`
-	TeacherName    string `json:"teacher_name"`
-	Type           string `json:"type" description:"signin or correction"`
-	RefID          string `json:"ref_id,omitempty" description:"correction: the sign-in it withdraws"`
-	At             string `json:"at" description:"RFC3339 UTC, server time"`
-	ActorUserID    string `json:"actor_user_id"`
-	Lanyard        string `json:"lanyard,omitempty"`
-	PhotoIDChecked bool   `json:"photo_id_checked"`
-	DBSEvidence    string `json:"dbs_evidence,omitempty" description:"agency_confirmation or certificate_seen"`
-	Reason         string `json:"reason,omitempty" description:"correction: wrong_person, not_on_site or checks_incomplete"`
+	ID              string `json:"id"`
+	BookingID       string `json:"booking_id"`
+	SupplyTeacherID string `json:"supply_teacher_id" description:"the teacher signed in, as recorded when the event was appended"`
+	TeacherName     string `json:"teacher_name" description:"as recorded when the event was appended; later reassignments do not change it"`
+	Type            string `json:"type" description:"signin or correction"`
+	RefID           string `json:"ref_id,omitempty" description:"correction: the sign-in it withdraws"`
+	At              string `json:"at" description:"RFC3339 UTC, server time"`
+	ActorUserID     string `json:"actor_user_id"`
+	Lanyard         string `json:"lanyard,omitempty"`
+	PhotoIDChecked  bool   `json:"photo_id_checked"`
+	DBSEvidence     string `json:"dbs_evidence,omitempty" description:"agency_confirmation or certificate_seen"`
+	Reason          string `json:"reason,omitempty" description:"correction: wrong_person, not_on_site or checks_incomplete"`
 }
 
 // SignInLog is GET /cover/sign-ins.
