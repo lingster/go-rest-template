@@ -19,6 +19,19 @@ class SigningTest < Minitest::Test
     }
   end
 
+  def test_keychain_list_parses_security_output
+    out = %(    "/Users/ci/Library/Keychains/other-ci.keychain-db"\n    "/Users/ci/Library/Keychains/login.keychain-db"\n)
+    assert_equal ["/Users/ci/Library/Keychains/other-ci.keychain-db", "/Users/ci/Library/Keychains/login.keychain-db"],
+                 Signing.keychain_list(out)
+    assert_equal [], Signing.keychain_list(nil)
+  end
+
+  def test_search_list_puts_ci_keychain_first_and_keeps_the_rest_in_order
+    listed = %w[/k/other-ci /k/login /k/app-ci /k/last]
+    assert_equal %w[/k/app-ci /k/other-ci /k/login /k/last], Signing.search_list_with_first(listed, "/k/app-ci")
+    assert_equal %w[/k/new /k/other-ci /k/login /k/app-ci /k/last], Signing.search_list_with_first(listed, "/k/new")
+  end
+
   def test_sha1_is_uppercase_hex_of_der
     assert_equal CERT_SHA1, Signing.sha1(CERT)
   end

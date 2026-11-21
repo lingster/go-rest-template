@@ -148,6 +148,10 @@ platform :ios do
                       timeout: 0, lock_when_sleeps: false, add_to_search_list: true)
     end
     unlock_keychain(path: KEYCHAIN, password: password, add_to_search_list: true, set_default: false)
+    with_keychain_first { sign_and_build(password, number) }
+  end
+
+  def sign_and_build(password, number)
     install_wwdr_certificate(password)
     get_certificates(team_id: team_id, keychain_path: KEYCHAIN, keychain_password: password)
     cert_sha1 = Signing.sha1(File.binread(lane_context[SharedValues::CERT_FILE_PATH]))
@@ -177,6 +181,16 @@ platform :ios do
          *AppConfig.dart_defines(@build_name))
     end
     Dir[File.join(IPA_DIR, "*.ipa")].first or UI.user_error!("No IPA in #{IPA_DIR} (profile #{profile.uuid})")
+  end
+
+  # Puts the CI keychain first in the user search list while the block signs, then restores the previous
+  # order (other runners on a shared Mac rely on it). See Signing.search_list_with_first for why.
+  def with_keychain_first
+    listed = Signing.keychain_list(sh("security", "list-keychains", "-d", "user", log: false))
+    sh("security", "list-keychains", "-d", "user", "-s", *Signing.search_list_with_first(listed, KEYCHAIN), log: false)
+    yield
+  ensure
+    sh("security", "list-keychains", "-d", "user", "-s", *listed, log: false) unless listed.to_a.empty?
   end
 
   # Sign in with Google: Info.plist reads the client IDs and the reversed-ID URL

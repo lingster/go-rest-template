@@ -47,6 +47,20 @@ module Signing
     installed.select { |_, p| p.name == keep.name && p.uuid != keep.uuid }.keys
   end
 
+  # Keychain paths from `security list-keychains -d user` output (one quoted path per line).
+  def keychain_list(output)
+    output.to_s.lines.map { |l| l.strip.delete_prefix('"').delete_suffix('"') }.reject(&:empty?)
+  end
+
+  # The search list with [first] at the front and every other keychain in its existing order.
+  # codesign resolves a certificate's private key through this list, so when the same distribution
+  # identity also sits in another, locked keychain listed earlier (a Mac shared by several apps at
+  # Apple's certificate limit), signing fails with errSecInternalComponent unless the unlocked CI
+  # keychain comes first.
+  def search_list_with_first(listed, first)
+    [first] + (listed - [first])
+  end
+
   # Export options pinned to one profile (by UUID) and one certificate (by SHA-1).
   def export_options(team_id:, app_id:, profile_uuid:, cert_sha1:)
     <<~PLIST
