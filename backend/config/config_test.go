@@ -9,7 +9,7 @@ import (
 
 func prod() *config.Config {
 	return &config.Config{AppEnv: "prod", DBDriver: "postgres", MailDriver: "smtp", SMTPRequireTLS: true,
-		JWTSecret: strings.Repeat("s", 40), CookieSecure: true}
+		JWTSecret: strings.Repeat("s", 40), CookieSecure: true, SchoolTimezone: config.DefaultSchoolTimezone}
 }
 
 func TestProdRejectsWeakAdminPassword(t *testing.T) {
@@ -103,5 +103,29 @@ func TestProdWarnings(t *testing.T) {
 	c.AppEnv = "dev"
 	if w := c.Warnings(); len(w) != 0 {
 		t.Fatalf("dev must not warn: %v", w)
+	}
+}
+
+func TestSchoolTimezone(t *testing.T) {
+	t.Setenv("SCHOOL_TIMEZONE", "")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SchoolTimezone != "Europe/London" {
+		t.Fatalf("default SCHOOL_TIMEZONE = %q", cfg.SchoolTimezone)
+	}
+	t.Setenv("SCHOOL_TIMEZONE", "America/New_York")
+	if cfg, err = config.Load(); err != nil || cfg.SchoolTimezone != "America/New_York" {
+		t.Fatalf("override: %v %q", err, cfg.SchoolTimezone)
+	}
+	t.Setenv("SCHOOL_TIMEZONE", "Mars/Olympus_Mons")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "SCHOOL_TIMEZONE") {
+		t.Fatalf("unknown zone must be rejected, got %v", err)
+	}
+	c := prod()
+	c.SchoolTimezone = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("empty SCHOOL_TIMEZONE must be rejected")
 	}
 }

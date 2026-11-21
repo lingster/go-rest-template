@@ -11,7 +11,20 @@ import (
 const (
 	RoleUser  = "user"
 	RoleAdmin = "admin"
+	// RoleReception staffs the front desk: sees arrivals and signs supply teachers in.
+	RoleReception = "reception"
+	// RoleCoverManager arranges cover: agencies, teachers and bookings.
+	RoleCoverManager = "cover_manager"
 )
+
+// Roles lists every assignable role.
+var Roles = []string{RoleUser, RoleAdmin, RoleReception, RoleCoverManager}
+
+// IsCoverManager reports whether the role may manage cover (admins implicitly can).
+func IsCoverManager(role string) bool { return role == RoleCoverManager || role == RoleAdmin }
+
+// IsCoverStaff reports whether the role may use the cover desk at all.
+func IsCoverStaff(role string) bool { return role == RoleReception || IsCoverManager(role) }
 
 // One-time token purposes.
 const (
@@ -136,5 +149,6 @@ func (*AuditLog) TableName() string { return "audit_logs" }
 // Register registers all models with the Beego ORM.
 func Register() {
 	orm.RegisterModel(new(User), new(RefreshToken), new(OneTimeToken), new(RecoveryCode),
-		new(WebAuthnCredential), new(AuditLog), new(UserIdentity))
+		new(WebAuthnCredential), new(AuditLog), new(UserIdentity),
+		new(Agency), new(SupplyTeacher), new(Booking), new(BookingLesson), new(EtaUpdate), new(SignInEvent))
 }

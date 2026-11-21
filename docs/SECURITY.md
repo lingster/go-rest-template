@@ -128,6 +128,47 @@
 - WebAuthn: set the relying party ID and allowed origins to your real domains; passkeys are bound to them.
 - Android release signing: keep the keystore and passwords in secrets, never in the repo.
 
+## Cover desk
+
+- **Agency API keys.** `agk_` + 256 random bits, returned exactly once (on create and on rotate). Only the SHA-256 hash
+  is stored (a high-entropy key needs no slow hash, and the hash is the lookup index); listings never return a key or
+  hash. Rotation replaces the hash, so the old key fails immediately. A missing, wrong, oversized, rotated-out or
+  deactivated key gets the same 401 message, so responses never reveal whether a key exists. Agency calls are not
+  under the per-IP `/auth` limit (one integration usually calls from one address); instead each client gets 20 invalid
+  keys per 15 min before 429 (only failures count, so a valid key is never locked out by others), and each valid key is
+  limited to `AGENCY_RATE_LIMIT_PER_MINUTE` (120). `X-Agency-Key` is deliberately absent from the CORS allow-list:
+  agencies integrate server-to-server, so browsers cannot send the key cross-origin. A bearer token is not an agency
+  credential and vice versa. Like the other limiters these are in-memory and per-instance.
+- **Agency isolation.** An agency only lists its own bookings, and reporting an ETA for another agency's booking is a
+  404 identical to an unknown id, so booking ids cannot be probed. Agencies never receive class, room or "covering"
+  (absent member of staff) data.
+- **Server-side role projection.** Reception and cover managers share endpoints, but the service builds the full view
+  once and projects it down for reception into separate response types (`CoverTodayReception`, `CoverWeekReception`)
+  that have no fields for covering, subject, lessons, rooms, agency notes or attention items. Filtering is never left
+  to the client. Manager-only actions are guarded by `RequireCoverManager` in the controller and re-checked in the
+  services; `admin` implies cover-manager rights.
+- **Append-only safeguarding log.** Sign-ins and corrections are `sign_in_events` rows that are never updated or deleted:
+  the repository interface has no update or delete methods (likewise for ETA updates). A mistaken sign-in is withdrawn
+  by a correction (fixed reasons) that references it; the original stays visible. Each entry records the server time,
+  the signed-in user who acted, the lanyard and the DBS evidence; photo ID must be confirmed, and a DBS certificate must
+  be seen when the agency has not attested an enhanced DBS check. Sign-ins and corrections are also audited.
+- **Sign-in concurrency.** A booking's events strictly alternate (sign-in, correction, sign-in, ...), so each event's
+  `seq` is the number of earlier events and `(booking_id, seq)` has a unique index. Two simultaneous sign-ins (or two
+  corrections of one sign-in) compute the same `seq`; the database accepts one and the other gets 409. This is an
+  optimistic, append-only guard that works the same on SQLite and Postgres, needs no row locks or mutable "current
+  sign-in" column, and also gives a deterministic log order. Booking status changes use a compare-and-set on the
+  previous status.
+- **ETA only, no location.** Agencies report an expected arrival time and an optional note, never a location. The
+  receive time is the server's clock (a client timestamp is never trusted), ETAs outside 06:00–16:00 school time on the
+  booking date or more than 10 minutes in the past are rejected, notes are capped at 120 characters with control and
+  format characters (newlines, bidi overrides, zero-width) removed, and each booking accepts at most one update per 30 s
+  and 100 in total. Rate-limited reports are not audited (noise); accepted ones are their own append-only table.
+- **Data minimisation for reception.** Reception sees the teacher's name, the agency's name and phone, times, status,
+  lanyard and whether a DBS certificate must be checked, which is what the front desk needs; not who is absent, what
+  is taught or where.
+- **Time zone.** `SCHOOL_TIMEZONE` is validated at start-up and the tz database is compiled into the binary; dates and
+  `HH:MM` inputs are converted with the zone's rules for that date, so DST changes do not shift bookings or ETA windows.
+
 ## Reporting a vulnerability
 
 Please report security issues privately via GitHub Security Advisories on this repository rather than public issues.

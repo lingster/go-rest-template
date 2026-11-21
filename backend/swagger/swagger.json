@@ -2,7 +2,7 @@
     "swagger": "2.0",
     "info": {
         "title": "Go REST Template API",
-        "description": "JSON API for the SaaS starter template: auth (JWT + rotating refresh tokens), TOTP 2FA, WebAuthn passkeys, profile and admin endpoints. Errors use the envelope {\"error\":{\"code\",\"message\",\"details\"}}. Health check: GET /healthz.\n",
+        "description": "JSON API for the SaaS starter template: auth (JWT + rotating refresh tokens), TOTP 2FA, WebAuthn passkeys, profile and admin endpoints, and the school cover desk (supply bookings, agency ETAs, reception sign-in log). Errors use the envelope {\"error\":{\"code\",\"message\",\"details\"}}. Health check: GET /healthz.\n",
         "version": "1.0.0",
         "contact": {
             "email": "ling@aidraw.ai"
@@ -247,6 +247,95 @@
                 "security": [
                     {
                         "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/agency/bookings": {
+            "get": {
+                "tags": [
+                    "agency"
+                ],
+                "operationId": "AgencyController.AgencyBookings",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "date",
+                        "description": "YYYY-MM-DD (default: today in SCHOOL_TIMEZONE)",
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AgencyBookingList"
+                        }
+                    },
+                    "401": {
+                        "description": "unauthorized"
+                    },
+                    "429": {
+                        "description": "rate_limited"
+                    }
+                },
+                "security": [
+                    {
+                        "AgencyKey": []
+                    }
+                ]
+            }
+        },
+        "/agency/bookings/{id}/eta": {
+            "post": {
+                "tags": [
+                    "agency"
+                ],
+                "operationId": "AgencyController.AgencyReportETA",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "Booking id",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "ETA",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EtaRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EtaUpdate"
+                        }
+                    },
+                    "401": {
+                        "description": "unauthorized"
+                    },
+                    "404": {
+                        "description": "not_found: unknown booking or another agency's"
+                    },
+                    "409": {
+                        "description": "conflict: not confirmed, not today or already signed in"
+                    },
+                    "422": {
+                        "description": "validation_error: ETA outside 06:00-16:00 on the booking date or over 10 minutes in the past"
+                    },
+                    "429": {
+                        "description": "rate_limited: more than one update per 30s or 100 per booking"
+                    }
+                },
+                "security": [
+                    {
+                        "AgencyKey": []
                     }
                 ]
             }
@@ -693,6 +782,450 @@
                 }
             }
         },
+        "/cover/agencies": {
+            "get": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverManagerController.CoverListAgencies",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/dto.Agency"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverManagerController.CoverCreateAgency",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Agency",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateAgencyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AgencyKeyResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden"
+                    },
+                    "409": {
+                        "description": "conflict: name taken"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/cover/agencies/{id}/rotate-key": {
+            "post": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverManagerController.CoverRotateAgencyKey",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "Agency id",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AgencyKeyResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "not_found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/cover/bookings": {
+            "post": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverManagerController.CoverCreateBooking",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Booking with one lesson per period of its kind",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateBookingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Booking"
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden"
+                    },
+                    "422": {
+                        "description": "validation_error"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/cover/bookings/{id}": {
+            "patch": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverManagerController.CoverUpdateBooking",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "Booking id",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Changes",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateBookingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.Booking"
+                        }
+                    },
+                    "404": {
+                        "description": "not_found"
+                    },
+                    "409": {
+                        "description": "conflict: cancelled, signed in, or changed meanwhile"
+                    },
+                    "422": {
+                        "description": "validation_error: e.g. teacher of another agency"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/cover/bookings/{id}/sign-in": {
+            "post": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverDeskController.CoverSignIn",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "Booking id",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Checks made",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SignInRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SignInEvent"
+                        }
+                    },
+                    "404": {
+                        "description": "not_found"
+                    },
+                    "409": {
+                        "description": "conflict: not confirmed, not today or already signed in"
+                    },
+                    "422": {
+                        "description": "validation_error: photo ID not checked, or DBS certificate required"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/cover/sign-ins": {
+            "get": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverDeskController.CoverSignInLog",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "date",
+                        "description": "YYYY-MM-DD booking date (default: today in SCHOOL_TIMEZONE)",
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SignInLog"
+                        }
+                    },
+                    "422": {
+                        "description": "validation_error"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/cover/sign-ins/{id}/corrections": {
+            "post": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverDeskController.CoverSignInCorrection",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "description": "Sign-in event id",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Reason",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CorrectionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SignInEvent"
+                        }
+                    },
+                    "404": {
+                        "description": "not_found"
+                    },
+                    "409": {
+                        "description": "conflict: already withdrawn"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/cover/teachers": {
+            "get": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverManagerController.CoverListTeachers",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "agency_id",
+                        "description": "Only this agency's teachers",
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/dto.SupplyTeacher"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "tags": [
+                    "cover"
+                ],
+                "operationId": "CoverManagerController.CoverCreateTeacher",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "body",
+                        "description": "Teacher",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateTeacherRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SupplyTeacher"
+                        }
+                    },
+                    "422": {
+                        "description": "validation_error"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/cover/today": {
+            "get": {
+                "tags": [
+                    "cover"
+                ],
+                "description": "Reception receives dto.CoverTodayReception (no covering, subject, lessons, notes or attention items); cover managers and admins receive dto.CoverTodayManager.\n\u003cbr\u003e",
+                "operationId": "CoverDeskController.CoverToday",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "date",
+                        "description": "YYYY-MM-DD (default: today in SCHOOL_TIMEZONE)",
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CoverTodayManager"
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden"
+                    },
+                    "422": {
+                        "description": "validation_error"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/cover/week": {
+            "get": {
+                "tags": [
+                    "cover"
+                ],
+                "description": "Reception receives dto.CoverWeekReception (name, agency, kind, status); cover managers and admins receive dto.CoverWeekManager.\n\u003cbr\u003e",
+                "operationId": "CoverDeskController.CoverWeek",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "start",
+                        "description": "Monday, YYYY-MM-DD (default: this week)",
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CoverWeekManager"
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden"
+                    },
+                    "422": {
+                        "description": "validation_error"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/me/": {
             "get": {
                 "tags": [
@@ -1033,8 +1566,100 @@
                     "type": "string"
                 },
                 "role": {
-                    "description": "user or admin",
+                    "description": "user, admin, reception or cover_manager",
                     "type": "string"
+                }
+            }
+        },
+        "dto.Agency": {
+            "title": "Agency",
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "description": "RFC3339 UTC",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Kestrel Teaching"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "01632 960 214"
+                }
+            }
+        },
+        "dto.AgencyBooking": {
+            "title": "AgencyBooking",
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "expected_arrival": {
+                    "description": "RFC3339 UTC",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "teacher_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AgencyBookingList": {
+            "title": "AgencyBookingList",
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AgencyBooking"
+                    }
+                }
+            }
+        },
+        "dto.AgencyKeyResponse": {
+            "title": "AgencyKeyResponse",
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "description": "Plaintext agency API key (send as X-Agency-Key). Shown only once; only its SHA-256 hash is stored",
+                    "type": "string"
+                },
+                "created_at": {
+                    "description": "RFC3339 UTC",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Kestrel Teaching"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "01632 960 214"
                 }
             }
         },
@@ -1111,6 +1736,66 @@
                 }
             }
         },
+        "dto.Booking": {
+            "title": "Booking",
+            "type": "object",
+            "properties": {
+                "agency_id": {
+                    "type": "string"
+                },
+                "covering": {
+                    "description": "absent member of staff",
+                    "type": "string",
+                    "example": "Mr Okafor"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "date": {
+                    "description": "YYYY-MM-DD school-local",
+                    "type": "string",
+                    "example": "2026-11-23"
+                },
+                "expected_arrival": {
+                    "description": "RFC3339 UTC",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "full, am or pm",
+                    "type": "string",
+                    "example": "full"
+                },
+                "lanyard": {
+                    "type": "string",
+                    "example": "S-01"
+                },
+                "lessons": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.Lesson"
+                    }
+                },
+                "status": {
+                    "description": "requested, confirmed or cancelled",
+                    "type": "string",
+                    "example": "requested"
+                },
+                "subject": {
+                    "type": "string",
+                    "example": "Science"
+                },
+                "supply_teacher_id": {
+                    "description": "null until confirmed",
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "dto.CeremonyResponse": {
             "title": "CeremonyResponse",
             "type": "object",
@@ -1148,6 +1833,370 @@
                 }
             }
         },
+        "dto.CorrectionRequest": {
+            "title": "CorrectionRequest",
+            "required": [
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "description": "wrong_person, not_on_site or checks_incomplete",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CoverArrival": {
+            "title": "CoverArrival",
+            "type": "object",
+            "properties": {
+                "agency_name": {
+                    "type": "string"
+                },
+                "agency_phone": {
+                    "type": "string"
+                },
+                "booking_id": {
+                    "type": "string"
+                },
+                "dbs_certificate_required": {
+                    "description": "reception must see a DBS certificate at sign-in",
+                    "type": "boolean"
+                },
+                "eta": {
+                    "description": "latest agency ETA, RFC3339 UTC, or null",
+                    "type": "string"
+                },
+                "eta_stale": {
+                    "description": "no ETA update for over 20 minutes while travelling",
+                    "type": "boolean"
+                },
+                "eta_updated_at": {
+                    "description": "when the latest ETA was received (server time), or null",
+                    "type": "string"
+                },
+                "expected_arrival": {
+                    "description": "RFC3339 UTC",
+                    "type": "string"
+                },
+                "lanyard": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "signed_in, unconfirmed, no_eta, on_the_way or running_late",
+                    "type": "string",
+                    "example": "on_the_way"
+                },
+                "teacher_name": {
+                    "description": "empty until the booking is confirmed",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CoverAttention": {
+            "title": "CoverAttention",
+            "type": "object",
+            "properties": {
+                "booking_id": {
+                    "type": "string"
+                },
+                "detail": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "P1 Science needs cover until 09:07"
+                },
+                "severity": {
+                    "description": "bad or warn",
+                    "type": "string",
+                    "example": "warn"
+                },
+                "type": {
+                    "description": "unconfirmed, cover_gap or eta_stale",
+                    "type": "string",
+                    "example": "cover_gap"
+                }
+            }
+        },
+        "dto.CoverManagerArrival": {
+            "title": "CoverManagerArrival",
+            "type": "object",
+            "properties": {
+                "agency_name": {
+                    "type": "string"
+                },
+                "agency_phone": {
+                    "type": "string"
+                },
+                "booking_id": {
+                    "type": "string"
+                },
+                "covering": {
+                    "type": "string"
+                },
+                "dbs_certificate_required": {
+                    "description": "reception must see a DBS certificate at sign-in",
+                    "type": "boolean"
+                },
+                "dbs_confirmed": {
+                    "type": "boolean"
+                },
+                "eta": {
+                    "description": "latest agency ETA, RFC3339 UTC, or null",
+                    "type": "string"
+                },
+                "eta_stale": {
+                    "description": "no ETA update for over 20 minutes while travelling",
+                    "type": "boolean"
+                },
+                "eta_updated_at": {
+                    "description": "when the latest ETA was received (server time), or null",
+                    "type": "string"
+                },
+                "expected_arrival": {
+                    "description": "RFC3339 UTC",
+                    "type": "string"
+                },
+                "first_lesson": {
+                    "$ref": "#/definitions/dto.FirstLesson"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "lanyard": {
+                    "type": "string"
+                },
+                "note": {
+                    "description": "latest agency note",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "signed_in, unconfirmed, no_eta, on_the_way or running_late",
+                    "type": "string",
+                    "example": "on_the_way"
+                },
+                "subject": {
+                    "type": "string"
+                },
+                "teacher_name": {
+                    "description": "empty until the booking is confirmed",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CoverTodayManager": {
+            "title": "CoverTodayManager",
+            "type": "object",
+            "properties": {
+                "arrivals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CoverManagerArrival"
+                    }
+                },
+                "attention": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CoverAttention"
+                    }
+                },
+                "counts": {
+                    "description": "arrivals per status",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "date": {
+                    "type": "string",
+                    "example": "2026-11-23"
+                },
+                "timezone": {
+                    "type": "string",
+                    "example": "Europe/London"
+                }
+            }
+        },
+        "dto.CoverWeekCell": {
+            "title": "CoverWeekCell",
+            "type": "object",
+            "properties": {
+                "booking_id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "requested, confirmed or cancelled",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CoverWeekManager": {
+            "title": "CoverWeekManager",
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CoverWeekManagerRow"
+                    }
+                },
+                "start": {
+                    "description": "Monday, YYYY-MM-DD",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CoverWeekManagerCell": {
+            "title": "CoverWeekManagerCell",
+            "type": "object",
+            "properties": {
+                "booking_id": {
+                    "type": "string"
+                },
+                "covering": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "lessons": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.Lesson"
+                    }
+                },
+                "status": {
+                    "description": "requested, confirmed or cancelled",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CoverWeekManagerDay": {
+            "title": "CoverWeekManagerDay",
+            "type": "object",
+            "properties": {
+                "bookings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CoverWeekManagerCell"
+                    }
+                },
+                "date": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CoverWeekManagerRow": {
+            "title": "CoverWeekManagerRow",
+            "type": "object",
+            "properties": {
+                "agency_name": {
+                    "type": "string"
+                },
+                "days": {
+                    "description": "Monday to Friday",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CoverWeekManagerDay"
+                    }
+                },
+                "teacher_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CreateAgencyRequest": {
+            "title": "CreateAgencyRequest",
+            "required": [
+                "name",
+                "phone"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CreateBookingRequest": {
+            "title": "CreateBookingRequest",
+            "required": [
+                "agency_id",
+                "date",
+                "kind",
+                "covering",
+                "subject",
+                "expected_arrival",
+                "lessons"
+            ],
+            "type": "object",
+            "properties": {
+                "agency_id": {
+                    "type": "string"
+                },
+                "covering": {
+                    "description": "absent member of staff",
+                    "type": "string"
+                },
+                "date": {
+                    "description": "YYYY-MM-DD school-local",
+                    "type": "string"
+                },
+                "expected_arrival": {
+                    "description": "HH:MM school-local on the booking date",
+                    "type": "string",
+                    "example": "08:15"
+                },
+                "kind": {
+                    "description": "full (P1-P5), am (P1-P3) or pm (P4-P5)",
+                    "type": "string"
+                },
+                "lanyard": {
+                    "description": "short visitor lanyard label",
+                    "type": "string"
+                },
+                "lessons": {
+                    "description": "each period of the kind exactly once",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.LessonInput"
+                    }
+                },
+                "subject": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CreateTeacherRequest": {
+            "title": "CreateTeacherRequest",
+            "required": [
+                "agency_id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "agency_id": {
+                    "type": "string"
+                },
+                "dbs_confirmed": {
+                    "description": "the agency attests an enhanced DBS check",
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                }
+            }
+        },
         "dto.DisableTOTPRequest": {
             "title": "DisableTOTPRequest",
             "required": [
@@ -1176,6 +2225,68 @@
                 }
             }
         },
+        "dto.EtaRequest": {
+            "title": "EtaRequest",
+            "required": [
+                "eta"
+            ],
+            "type": "object",
+            "properties": {
+                "eta": {
+                    "description": "HH:MM (school-local, booking date) or RFC3339",
+                    "type": "string",
+                    "example": "08:12"
+                },
+                "note": {
+                    "description": "at most 120 characters; control characters are removed",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EtaUpdate": {
+            "title": "EtaUpdate",
+            "type": "object",
+            "properties": {
+                "booking_id": {
+                    "type": "string"
+                },
+                "eta": {
+                    "description": "RFC3339 UTC",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "reported_at": {
+                    "description": "server receive time, RFC3339 UTC",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.FirstLesson": {
+            "title": "FirstLesson",
+            "type": "object",
+            "properties": {
+                "class_name": {
+                    "type": "string"
+                },
+                "period": {
+                    "type": "string",
+                    "example": "P1"
+                },
+                "room": {
+                    "type": "string"
+                },
+                "start": {
+                    "description": "HH:MM school-local",
+                    "type": "string",
+                    "example": "08:55"
+                }
+            }
+        },
         "dto.GoogleLoginRequest": {
             "title": "GoogleLoginRequest",
             "required": [
@@ -1198,6 +2309,63 @@
                 },
                 "web_client_id": {
                     "description": "public OAuth web client id; empty when disabled",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.Lesson": {
+            "title": "Lesson",
+            "type": "object",
+            "properties": {
+                "class_name": {
+                    "type": "string",
+                    "example": "9X2"
+                },
+                "end": {
+                    "description": "HH:MM school-local",
+                    "type": "string",
+                    "example": "09:55"
+                },
+                "free": {
+                    "description": "booked time with no lesson",
+                    "type": "boolean"
+                },
+                "period": {
+                    "type": "string",
+                    "example": "P1"
+                },
+                "room": {
+                    "type": "string",
+                    "example": "Lab 2"
+                },
+                "start": {
+                    "description": "HH:MM school-local",
+                    "type": "string",
+                    "example": "08:55"
+                }
+            }
+        },
+        "dto.LessonInput": {
+            "title": "LessonInput",
+            "required": [
+                "period"
+            ],
+            "type": "object",
+            "properties": {
+                "class_name": {
+                    "description": "required unless free",
+                    "type": "string"
+                },
+                "free": {
+                    "description": "booked time with no lesson",
+                    "type": "boolean"
+                },
+                "period": {
+                    "type": "string",
+                    "example": "P1"
+                },
+                "room": {
+                    "description": "required unless free",
                     "type": "string"
                 }
             }
@@ -1381,6 +2549,83 @@
                 }
             }
         },
+        "dto.SignInEvent": {
+            "title": "SignInEvent",
+            "type": "object",
+            "properties": {
+                "actor_user_id": {
+                    "type": "string"
+                },
+                "at": {
+                    "description": "RFC3339 UTC, server time",
+                    "type": "string"
+                },
+                "booking_id": {
+                    "type": "string"
+                },
+                "dbs_evidence": {
+                    "description": "agency_confirmation or certificate_seen",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lanyard": {
+                    "type": "string"
+                },
+                "photo_id_checked": {
+                    "type": "boolean"
+                },
+                "reason": {
+                    "description": "correction: wrong_person, not_on_site or checks_incomplete",
+                    "type": "string"
+                },
+                "ref_id": {
+                    "description": "correction: the sign-in it withdraws",
+                    "type": "string"
+                },
+                "teacher_name": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "signin or correction",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SignInLog": {
+            "title": "SignInLog",
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "items": {
+                    "description": "newest first",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.SignInEvent"
+                    }
+                }
+            }
+        },
+        "dto.SignInRequest": {
+            "title": "SignInRequest",
+            "required": [
+                "photo_id_checked"
+            ],
+            "type": "object",
+            "properties": {
+                "dbs_certificate_seen": {
+                    "description": "required when the agency has not confirmed a DBS check",
+                    "type": "boolean"
+                },
+                "photo_id_checked": {
+                    "description": "must be true",
+                    "type": "boolean"
+                }
+            }
+        },
         "dto.Stats": {
             "title": "Stats",
             "type": "object",
@@ -1400,6 +2645,34 @@
                 "users_verified": {
                     "type": "integer",
                     "format": "int64"
+                }
+            }
+        },
+        "dto.SupplyTeacher": {
+            "title": "SupplyTeacher",
+            "type": "object",
+            "properties": {
+                "agency_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "description": "RFC3339 UTC",
+                    "type": "string"
+                },
+                "dbs_confirmed": {
+                    "description": "the agency attests an enhanced DBS check",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Priya Natarajan"
+                },
+                "subject": {
+                    "type": "string",
+                    "example": "Science"
                 }
             }
         },
@@ -1448,6 +2721,33 @@
                 "token_type": {
                     "type": "string",
                     "example": "Bearer"
+                }
+            }
+        },
+        "dto.UpdateBookingRequest": {
+            "title": "UpdateBookingRequest",
+            "type": "object",
+            "properties": {
+                "covering": {
+                    "type": "string"
+                },
+                "lanyard": {
+                    "type": "string"
+                },
+                "lessons": {
+                    "description": "replaces all lessons",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.LessonInput"
+                    }
+                },
+                "status": {
+                    "description": "confirmed (needs supply_teacher_id) or cancelled",
+                    "type": "string"
+                },
+                "supply_teacher_id": {
+                    "description": "teacher of the booking's agency; only with status=confirmed",
+                    "type": "string"
                 }
             }
         },
@@ -1507,7 +2807,7 @@
                     "format": "int64"
                 },
                 "role": {
-                    "description": "user or admin",
+                    "description": "user, admin, reception or cover_manager",
                     "type": "string",
                     "example": "user"
                 },
@@ -1551,6 +2851,12 @@
         }
     },
     "securityDefinitions": {
+        "AgencyKey": {
+            "type": "apiKey",
+            "description": "Supply agency API key (cover desk)",
+            "name": "X-Agency-Key",
+            "in": "header"
+        },
         "BearerAuth": {
             "type": "apiKey",
             "description": "Enter: Bearer \u003caccess_token\u003e",
@@ -1570,6 +2876,14 @@
         {
             "name": "admin",
             "description": "AdminController handles admin-only endpoints (role=admin enforced by filters).\n"
+        },
+        {
+            "name": "cover",
+            "description": "CoverManagerController handles agencies, supply teachers and bookings (cover managers and admins).\n"
+        },
+        {
+            "name": "agency",
+            "description": "AgencyController is the API for supply agencies (X-Agency-Key enforced by filters.AuthenticateAgency).\n"
         }
     ]
 }

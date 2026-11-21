@@ -20,8 +20,15 @@ func one(qs orm.QuerySeter, dest interface{}, cols ...string) error {
 	return err
 }
 
-func insert(m interface{}) error {
-	_, err := orm.NewOrm().Insert(m)
+func insert(m interface{}) error { return insertWith(orm.NewOrm(), m) }
+
+// inserter is satisfied by both orm.Ormer and orm.TxOrmer.
+type inserter interface {
+	Insert(md interface{}) (int64, error)
+}
+
+func insertWith(o inserter, m interface{}) error {
+	_, err := o.Insert(m)
 	if errors.Is(err, orm.ErrLastInsertIdUnavailable) {
 		// Postgres (lib/pq) cannot report LastInsertId for our string primary keys; the row was inserted.
 		return nil

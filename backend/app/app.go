@@ -36,6 +36,8 @@ type Options struct {
 	GoogleVerifier services.GoogleTokenVerifier
 	// Assets holds the "swagger", "static" and "views" directories (normally //go:embed).
 	Assets fs.FS
+	// Clock overrides the cover desk's clock (tests); nil uses time.Now.
+	Clock func() time.Time
 }
 
 // App is the assembled application.
@@ -56,7 +58,8 @@ func New(cfg *config.Config, opts Options) (*App, error) {
 	if err := database.Init(cfg.DBDriver, cfg.DatabaseURL); err != nil {
 		return nil, err
 	}
-	c, err := container.New(cfg, repositories.NewORMSet(), opts.Mailer, container.WithGoogleVerifier(opts.GoogleVerifier))
+	c, err := container.New(cfg, repositories.NewORMSet(), opts.Mailer,
+		container.WithGoogleVerifier(opts.GoogleVerifier), container.WithClock(opts.Clock))
 	if err != nil {
 		return nil, err
 	}
@@ -113,10 +116,7 @@ func buildHandler(cfg *config.Config, assets fs.FS) http.Handler {
 	}
 	mux.Handle("/", web.BeeApp.Handlers)
 
-	var limiter ratelimit.Limiter
-	if cfg.RateLimitPerMinute > 0 {
-		limiter = ratelimit.NewFixedWindow(cfg.RateLimitPerMinute, time.Minute)
-	}
+	limiter := newIPLimiter(cfg)
 	return filters.Chain(mux,
 		filters.Recover(),
 		filters.RequestLogger(cfg.TrustProxy),
@@ -125,6 +125,16 @@ func buildHandler(cfg *config.Config, assets fs.FS) http.Handler {
 		filters.RateLimit(limiter, "/api/v1/auth/", cfg.TrustProxy),
 		filters.ForceJSONBody("/api/"),
 	)
+}
+
+// newIPLimiter returns the per-client limiter for /auth/* (nil when RATE_LIMIT_PER_MINUTE=0). Agency
+// API calls are limited per key and per client failure instead (see services.AgencyService.Authenticate),
+// since one agency integration often calls from a single address.
+func newIPLimiter(cfg *config.Config) ratelimit.Limiter {
+	if cfg.RateLimitPerMinute <= 0 {
+		return nil
+	}
+	return ratelimit.NewFixedWindow(cfg.RateLimitPerMinute, time.Minute)
 }
 
 // landingAssetCache: file names are not fingerprinted, so keep the lifetime to a day.

@@ -96,6 +96,61 @@ type AuditLogRepository interface {
 	List(userID string, offset, limit int) ([]*models.AuditLog, int64, error)
 }
 
+// AgencyRepository persists supply agencies.
+type AgencyRepository interface {
+	// Create returns ErrDuplicate when the name (or key hash) is taken.
+	Create(a *models.Agency) error
+	GetByID(id string) (*models.Agency, error)
+	GetByKeyHash(hash string) (*models.Agency, error)
+	List() ([]*models.Agency, error)
+	// GetMany returns the agencies with the given ids, keyed by id.
+	GetMany(ids []string) (map[string]*models.Agency, error)
+	// SetKeyHash replaces the API key hash (key rotation); the old key stops working at once.
+	SetKeyHash(id, hash string) error
+}
+
+// SupplyTeacherRepository persists supply teachers.
+type SupplyTeacherRepository interface {
+	Create(t *models.SupplyTeacher) error
+	GetByID(id string) (*models.SupplyTeacher, error)
+	// List returns all teachers, or only one agency's when agencyID is not empty.
+	List(agencyID string) ([]*models.SupplyTeacher, error)
+	GetMany(ids []string) (map[string]*models.SupplyTeacher, error)
+}
+
+// BookingRepository persists bookings. Agency, date, kind, subject and expected arrival are fixed at
+// creation; Update writes only the status/assignment fields.
+type BookingRepository interface {
+	// Create stores the booking and its lessons atomically.
+	Create(b *models.Booking, lessons []*models.BookingLesson) error
+	GetByID(id string) (*models.Booking, error)
+	// ListByDates returns the bookings dated from..to inclusive (YYYY-MM-DD), optionally for one agency.
+	ListByDates(from, to, agencyID string) ([]*models.Booking, error)
+	// Update writes status, supply_teacher_id, covering, lanyard and updated_at iff the stored status is
+	// still fromStatus (optimistic concurrency); false means it changed meanwhile.
+	Update(b *models.Booking, fromStatus string) (bool, error)
+	// ReplaceLessons swaps the booking's lessons atomically.
+	ReplaceLessons(bookingID string, lessons []*models.BookingLesson) error
+	// LessonsByBookings returns lessons keyed by booking id.
+	LessonsByBookings(ids []string) (map[string][]*models.BookingLesson, error)
+}
+
+// EtaUpdateRepository is append-only: there is deliberately no update or delete.
+type EtaUpdateRepository interface {
+	Create(u *models.EtaUpdate) error
+	// ListByBookings returns updates keyed by booking id, oldest first.
+	ListByBookings(ids []string) (map[string][]*models.EtaUpdate, error)
+}
+
+// SignInEventRepository is the append-only safeguarding log: there is deliberately no update or delete.
+type SignInEventRepository interface {
+	// Create returns ErrDuplicate when (booking_id, seq) is taken: a concurrent conflicting event won.
+	Create(e *models.SignInEvent) error
+	GetByID(id string) (*models.SignInEvent, error)
+	// ListByBookings returns events keyed by booking id, in seq order.
+	ListByBookings(ids []string) (map[string][]*models.SignInEvent, error)
+}
+
 // Set bundles all repositories (composition root convenience).
 type Set struct {
 	Users         UserRepository
@@ -105,6 +160,11 @@ type Set struct {
 	Passkeys      WebAuthnCredentialRepository
 	Audit         AuditLogRepository
 	Identities    IdentityRepository
+	Agencies      AgencyRepository
+	Teachers      SupplyTeacherRepository
+	Bookings      BookingRepository
+	EtaUpdates    EtaUpdateRepository
+	SignIns       SignInEventRepository
 }
 
 // NewORMSet builds the Beego ORM backed repositories.
@@ -117,5 +177,10 @@ func NewORMSet() *Set {
 		Passkeys:      &ormPasskeyRepo{},
 		Audit:         &ormAuditRepo{},
 		Identities:    &ormIdentityRepo{},
+		Agencies:      &ormAgencyRepo{},
+		Teachers:      &ormTeacherRepo{},
+		Bookings:      &ormBookingRepo{},
+		EtaUpdates:    &ormEtaRepo{},
+		SignIns:       &ormSignInRepo{},
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/lingster/go-rest-template/backend/container"
 	"github.com/lingster/go-rest-template/backend/httpx"
 	"github.com/lingster/go-rest-template/backend/models"
+	"github.com/lingster/go-rest-template/backend/ratelimit"
 	"github.com/lingster/go-rest-template/backend/repositories"
 )
 
@@ -52,10 +53,44 @@ func Authenticate(ctx *context.Context) {
 	ctx.Input.SetData(ClaimsKey, claims)
 }
 
+// requireRole must run after Authenticate; it rejects users whose role is not allowed with 403.
+func requireRole(ctx *context.Context, allowed func(role string) bool, msg string) {
+	u, ok := ctx.Input.GetData(CurrentUserKey).(*models.User)
+	if !ok || !allowed(u.Role) {
+		httpx.WriteError(ctx.ResponseWriter, apperr.Forbidden(msg))
+	}
+}
+
 // RequireAdmin must run after Authenticate; it rejects non-admins with 403.
 func RequireAdmin(ctx *context.Context) {
-	u, ok := ctx.Input.GetData(CurrentUserKey).(*models.User)
-	if !ok || u.Role != models.RoleAdmin {
-		httpx.WriteError(ctx.ResponseWriter, apperr.Forbidden("Admin role required"))
+	requireRole(ctx, func(r string) bool { return r == models.RoleAdmin }, "Admin role required")
+}
+
+// RequireCoverStaff must run after Authenticate; it admits reception, cover managers and admins.
+func RequireCoverStaff(ctx *context.Context) {
+	requireRole(ctx, models.IsCoverStaff, "Cover desk role required")
+}
+
+// RequireCoverManager must run after Authenticate; it admits cover managers and admins.
+func RequireCoverManager(ctx *context.Context) {
+	requireRole(ctx, models.IsCoverManager, "Cover manager role required")
+}
+
+// AgencyKeyHeader carries an agency's API key.
+const AgencyKeyHeader = "X-Agency-Key"
+
+// CurrentAgencyKey is the ctx.Input data key under which the authenticated *models.Agency is stored.
+const CurrentAgencyKey = "current_agency"
+
+// AuthenticateAgency is a Beego filter requiring a valid X-Agency-Key of an active agency. Every failure
+// gets the same 401, so a response never reveals whether a key exists or was rotated out.
+func AuthenticateAgency(ctx *context.Context) {
+	c := container.Get()
+	client := ratelimit.ClientKey(httpx.ClientIP(ctx.Request, c.Cfg.TrustProxy))
+	a, err := c.Agencies.Authenticate(client, ctx.Input.Header(AgencyKeyHeader))
+	if err != nil {
+		httpx.WriteError(ctx.ResponseWriter, err)
+		return
 	}
+	ctx.Input.SetData(CurrentAgencyKey, a)
 }

@@ -58,6 +58,7 @@ func Config() *config.Config {
 		CORSAllowedOrigins: []string{"http://localhost:5173"},
 		WebAuthnRPID:       "localhost", WebAuthnRPName: "Test", WebAuthnRPOrigins: []string{"http://localhost:5173"},
 		RateLimitPerMinute: 100000, BcryptCost: 4, SwaggerEnabled: true,
+		SchoolTimezone: config.DefaultSchoolTimezone, AgencyRateLimitPerMinute: 100000,
 	}
 }
 
@@ -186,4 +187,34 @@ func (m *MemMailer) Count(to string) int {
 		}
 	}
 	return n
+}
+
+// Clock is a settable clock for code that takes a now func; the zero value follows time.Now.
+type Clock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+// Now returns the set time, or time.Now when unset.
+func (c *Clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.t.IsZero() {
+		return time.Now()
+	}
+	return c.t
+}
+
+// Set fixes the clock at t (the zero time restores time.Now).
+func (c *Clock) Set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = t
+}
+
+// Advance moves a set clock forward by d.
+func (c *Clock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
 }

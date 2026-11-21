@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // SCHOOL_TIMEZONE must resolve even on images without /usr/share/zoneinfo
 
 	"github.com/lingster/go-rest-template/backend/app"
 	"github.com/lingster/go-rest-template/backend/config"

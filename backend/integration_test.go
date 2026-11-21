@@ -27,6 +27,8 @@ const (
 var (
 	handler http.Handler
 	mailer  = &testutil.MemMailer{}
+	// coverClock drives the cover desk's notion of "now" (unset: real time).
+	coverClock = &testutil.Clock{}
 )
 
 func TestMain(m *testing.M) {
@@ -39,7 +41,7 @@ func TestMain(m *testing.M) {
 	cfg.DatabaseURL = "file:" + dir + "/test.db"
 	cfg.AdminEmail, cfg.AdminPassword = adminEmail, adminPassword
 	cfg.GoogleClientIDs = []string{googleWebClientID, "ios-client"}
-	a, err := app.New(cfg, app.Options{Mailer: mailer, Assets: assetsFS, GoogleVerifier: googleFake})
+	a, err := app.New(cfg, app.Options{Mailer: mailer, Assets: assetsFS, GoogleVerifier: googleFake, Clock: coverClock.Now})
 	if err != nil {
 		panic(err)
 	}

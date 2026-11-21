@@ -90,6 +90,30 @@ func (b *BaseController) CurrentUser() *models.User {
 	return u
 }
 
+// CurrentAgency returns the agency put in place by filters.AuthenticateAgency.
+func (b *BaseController) CurrentAgency() *models.Agency {
+	a, _ := b.Ctx.Input.GetData(filters.CurrentAgencyKey).(*models.Agency)
+	return a
+}
+
+// Created writes v as JSON with 201, or the error envelope when err is set.
+func (b *BaseController) Created(v interface{}, err error) {
+	if err != nil {
+		b.Fail(err)
+		return
+	}
+	b.Reply(http.StatusCreated, v)
+}
+
+// Result writes v as JSON with 200, or the error envelope when err is set.
+func (b *BaseController) Result(v interface{}, err error) {
+	if err != nil {
+		b.Fail(err)
+		return
+	}
+	b.OK(v)
+}
+
 // RequireRecentAuth guards operations that add a sign-in credential (passkey, TOTP): a stolen or
 // long-lived session must not be able to plant a credential that survives a password reset. It
 // writes 403 reauthentication_required and returns false when the last sign-in is too old.

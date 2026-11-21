@@ -3,8 +3,11 @@ package dto
 
 import (
 	"net/mail"
+	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/lingster/go-rest-template/backend/models"
 )
 
 // ---------- responses ----------
@@ -14,7 +17,7 @@ type User struct {
 	ID            string   `json:"id" description:"User UUID" example:"6f1c1a0e-5a0e-4a3e-9f7a-3b1d2f6b7c11"`
 	Email         string   `json:"email" example:"ada@example.com"`
 	Name          string   `json:"name" example:"Ada"`
-	Role          string   `json:"role" description:"user or admin" example:"user"`
+	Role          string   `json:"role" description:"user, admin, reception or cover_manager" example:"user"`
 	EmailVerified bool     `json:"email_verified"`
 	IsActive      bool     `json:"is_active"`
 	TOTPEnabled   bool     `json:"totp_enabled"`
@@ -243,7 +246,7 @@ type DisableTOTPRequest struct {
 // AdminUpdateUserRequest patches a user (all fields optional).
 type AdminUpdateUserRequest struct {
 	Name          *string `json:"name"`
-	Role          *string `json:"role" description:"user or admin"`
+	Role          *string `json:"role" description:"user, admin, reception or cover_manager"`
 	IsActive      *bool   `json:"is_active"`
 	EmailVerified *bool   `json:"email_verified"`
 }
@@ -406,8 +409,8 @@ func (r *AdminUpdateUserRequest) Validate() map[string]string {
 	if r.Name != nil {
 		checkName(d, "name", *r.Name)
 	}
-	if r.Role != nil && *r.Role != "user" && *r.Role != "admin" {
-		d["role"] = "must be user or admin"
+	if r.Role != nil && !slices.Contains(models.Roles, *r.Role) {
+		d["role"] = "must be one of " + strings.Join(models.Roles, ", ")
 	}
 	return d
 }

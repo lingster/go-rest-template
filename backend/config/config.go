@@ -17,6 +17,9 @@ const DefaultJWTSecret = "dev-insecure-change-me-please-0123456789"
 // DefaultAdminPassword is the placeholder from .env.example / docker-compose; prod refuses to seed it.
 const DefaultAdminPassword = "change-me-please"
 
+// DefaultSchoolTimezone is the default SCHOOL_TIMEZONE.
+const DefaultSchoolTimezone = "Europe/London"
+
 // MinProdAdminPasswordLen is the minimum seeded admin password length in prod.
 const MinProdAdminPasswordLen = 12
 
@@ -79,6 +82,12 @@ type Config struct {
 	// SwaggerEnabled serves the API spec and Swagger UI at /swagger/ (SWAGGER_ENABLED, default off in prod).
 	SwaggerEnabled bool
 
+	// SchoolTimezone is the IANA zone the school day is in (SCHOOL_TIMEZONE, default Europe/London). Booking
+	// dates, period times and ETA windows are school-local; timestamps are stored and returned in UTC.
+	SchoolTimezone string
+	// AgencyRateLimitPerMinute is the max requests per agency API key per minute on /agency/* (0 disables).
+	AgencyRateLimitPerMinute int
+
 	// LandingStoreLinksLive shows the App Store / Google Play buttons on the landing page
 	// (LANDING_STORE_LINKS_LIVE); off until the apps are public, when "Coming soon" is shown instead.
 	LandingStoreLinksLive bool
@@ -121,6 +130,8 @@ func Load() (*Config, error) {
 		BcryptCost:               envInt("BCRYPT_COST", 12),
 		TrustProxy:               envBool("TRUST_PROXY", false),
 		LandingStoreLinksLive:    envBool("LANDING_STORE_LINKS_LIVE", false),
+		SchoolTimezone:           env("SCHOOL_TIMEZONE", DefaultSchoolTimezone),
+		AgencyRateLimitPerMinute: envInt("AGENCY_RATE_LIMIT_PER_MINUTE", 120),
 	}
 	c.SMTPRequireTLS = envBool("SMTP_REQUIRE_TLS", c.IsProd())
 	c.SwaggerEnabled = envBool("SWAGGER_ENABLED", !c.IsProd())
@@ -132,6 +143,9 @@ func Load() (*Config, error) {
 func (c *Config) Validate() error {
 	if c.DBDriver != "sqlite" && c.DBDriver != "postgres" {
 		return fmt.Errorf("DB_DRIVER must be sqlite or postgres, got %q", c.DBDriver)
+	}
+	if _, err := c.SchoolLocation(); err != nil {
+		return err
 	}
 	if c.MailDriver != "console" && c.MailDriver != "smtp" {
 		return fmt.Errorf("MAIL_DRIVER must be console or smtp, got %q", c.MailDriver)
@@ -153,6 +167,18 @@ func (c *Config) Validate() error {
 		return errors.New("CORS_ALLOWED_ORIGINS must list explicit origins in prod, not *")
 	}
 	return nil
+}
+
+// SchoolLocation loads SCHOOL_TIMEZONE. An empty value is rejected rather than silently meaning UTC.
+func (c *Config) SchoolLocation() (*time.Location, error) {
+	if strings.TrimSpace(c.SchoolTimezone) == "" {
+		return nil, errors.New("SCHOOL_TIMEZONE must be set (e.g. Europe/London)")
+	}
+	loc, err := time.LoadLocation(c.SchoolTimezone)
+	if err != nil {
+		return nil, fmt.Errorf("SCHOOL_TIMEZONE %q is not a known time zone: %w", c.SchoolTimezone, err)
+	}
+	return loc, nil
 }
 
 // Warnings lists risky but legal settings, logged at startup.
