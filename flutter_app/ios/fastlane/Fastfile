@@ -16,6 +16,7 @@ require "open3"
 require "plist"
 require_relative "../../../tool/fastlane/app_config"
 require_relative "../../../tool/fastlane/build_info"
+require_relative "../../../tool/fastlane/host_lock"
 require_relative "../../../tool/fastlane/signing"
 
 # The Flutter app (pubspec.yaml, ios/, build/) lives in flutter_app/; the Ruby
@@ -32,6 +33,9 @@ SCREENSHOTS_PATH = File.expand_path("screenshots", __dir__)
 # throwaway keychain in RUNNER_TEMP (also a new certificate per run, so revoke old ones).
 KEYCHAIN = AppConfig.keychain_path
 IPA_DIR = File.join(ROOT, "build/ios/ipa")
+# Host-wide lock held while the keychain search list is reordered, so concurrent signing builds on one Mac
+# (several runners) cannot interleave. Wait settings: CI_HOST_LOCK_POLL / CI_HOST_LOCK_WAIT_MAX (HostLock).
+KEYCHAIN_ORDER_LOCK = ENV.fetch("CI_KEYCHAIN_LOCK_DIR", File.expand_path("~/.ci-keychain-order.lock"))
 
 # Where Xcode looks for installed profiles (the second is Xcode 16+).
 PROFILE_DIRS = [
@@ -184,13 +188,18 @@ platform :ios do
   end
 
   # Puts the CI keychain first in the user search list while the block signs, then restores the previous
-  # order (other runners on a shared Mac rely on it). See Signing.search_list_with_first for why.
+  # order (other runners on a shared Mac rely on it). See Signing.search_list_with_first for why. Holds the
+  # host-wide KEYCHAIN_ORDER_LOCK throughout: the search list is shared by every build on this Mac.
   def with_keychain_first
-    listed = Signing.keychain_list(sh("security", "list-keychains", "-d", "user", log: false))
-    sh("security", "list-keychains", "-d", "user", "-s", *Signing.search_list_with_first(listed, KEYCHAIN), log: false)
-    yield
-  ensure
-    sh("security", "list-keychains", "-d", "user", "-s", *listed, log: false) unless listed.to_a.empty?
+    HostLock.synchronize(KEYCHAIN_ORDER_LOCK, log: ->(msg) { UI.important(msg) }) do
+      listed = Signing.keychain_list(sh("security", "list-keychains", "-d", "user", log: false))
+      begin
+        sh("security", "list-keychains", "-d", "user", "-s", *Signing.search_list_with_first(listed, KEYCHAIN), log: false)
+        yield
+      ensure
+        sh("security", "list-keychains", "-d", "user", "-s", *listed, log: false) unless listed.to_a.empty?
+      end
+    end
   end
 
   # Sign in with Google: Info.plist reads the client IDs and the reversed-ID URL

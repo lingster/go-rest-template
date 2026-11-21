@@ -64,6 +64,47 @@ runner's `.env`. `tool/ci/setup-linux-android-runner.sh` and `tool/ci/register-o
 they execute workflow code, so fork pull requests must never reach them. The iOS runner needs a
 logged-in GUI session so `codesign` can use the keychain.
 
+### Shared self-hosted host: one job at a time
+
+Several runners (one per repo) on one small machine can start jobs at once. To allow only **one job
+at a time across all runners on the host**, each runner runs two job hooks that share a lock
+directory (`$HOME/.ci-host-job.lock`):
+
+- `tool/ci/runner-hooks/job-started.sh` waits until it can create the lock (an atomic `mkdir`; no
+  `flock` on macOS), polling every 15 s and logging who holds it, then records the owner (runner,
+  repo, run, job) and the PID of the job's `Runner.Worker` process.
+- `tool/ci/runner-hooks/job-completed.sh` removes the lock if this job owns it. It never fails a job.
+- A holder that was killed without releasing (job cancelled hard, runner crash, reboot) is detected
+  by its PID being gone (or now another program); the next waiter removes the lock and continues.
+
+Install on the Mac (as the user that owns the runners; runs on macOS bash 3.2 and Linux). It copies the
+hooks to `~/ci-hooks` and adds `ACTIONS_RUNNER_HOOK_JOB_STARTED` / `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`
+to the `.env` of every `~/actions-runner*` directory, leaving other lines alone. A runner whose `.env`
+already sets a different hook is reported and skipped. It is idempotent; `--dry-run` shows the changes.
+
+```sh
+tool/ci/install-runner-hooks.sh --dry-run     # preview
+tool/ci/install-runner-hooks.sh               # all ~/actions-runner*; or pass runner directories
+```
+
+**Restart caveat:** a runner reads `.env` only when it starts. The script prints (does not run) the
+restart command per runner, e.g. `launchctl kickstart -k gui/$(id -u)/<label>`. A restart kills the
+job the runner is running, so restart each runner only when it is idle.
+
+**See or clear the lock:** `cat ~/.ci-host-job.lock/owner ~/.ci-host-job.lock/pid` shows the holder.
+A dead holder is cleared automatically; if the lock is stuck on a live but hung job, cancel that job, or
+`rm -rf ~/.ci-host-job.lock` (a waiting job then takes it within 15 s). Override the directory with
+`CI_HOST_LOCK_DIR`, the poll interval with `CI_HOST_LOCK_POLL`.
+
+**Waiting counts toward the job's timeout.** The wait happens in the "Set up job" step, so a queued
+job's `timeout-minutes` is already running. A job gives up with an `::error::` after
+`CI_HOST_LOCK_WAIT_MAX` seconds (default 21600, 6 h); set `timeout-minutes` high enough for the queue.
+
+The iOS lane also takes a separate host-wide lock (`~/.ci-keychain-order.lock`, `CI_KEYCHAIN_LOCK_DIR`
+to override) around the temporary reordering of the keychain search list, so signing never interleaves
+even for runners without the hooks. `tool/ci/runner-hooks/test.sh` and `tool/fastlane/host_lock_test.rb`
+test both locks.
+
 ## Quick setup script
 
 `tool/ci/setup-store-secrets.sh --build-aab` does the secret steps below from a Mac with `gh`
