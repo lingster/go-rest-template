@@ -25,6 +25,13 @@ say() { printf '\n== %s\n' "$*"; }
 secret_from_stdin() { gh secret set "$1" --repo "$REPO" >/dev/null && echo "set secret $1"; }
 ask_hidden() { local v; read -r -s -p "$1: " v; echo >&2; printf '%s' "$v"; }
 ask() { local v; read -r -p "$1: " v; printf '%s' "$v"; }
+# Prompts for a file path. read does not expand "~", so a leading ~ is expanded here, and a path that is
+# not a file stops the script with a clear message before any secret is written. Empty means skip.
+ask_path() {
+  local p; p="$(ask "$1")"; p="${p/#\~/$HOME}"
+  if [[ -n "$p" && ! -f "$p" ]]; then echo "no such file: $p" >&2; return 1; fi
+  printf '%s' "$p"
+}
 
 command -v gh >/dev/null || { echo "gh CLI is required" >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "run 'gh auth login' first" >&2; exit 1; }
@@ -56,9 +63,8 @@ printf 'upload' | secret_from_stdin ANDROID_KEY_ALIAS
 
 # --- Google Play service account ----------------------------------------------
 say "Google Play service account JSON"
-PLAY_JSON="$(ask "Path to the Play service account JSON (empty = skip)")"
+PLAY_JSON="$(ask_path "Path to the Play service account JSON (empty = skip)")"
 if [[ -n "$PLAY_JSON" ]]; then
-  [[ -f "$PLAY_JSON" ]] || { echo "no such file: $PLAY_JSON" >&2; exit 1; }
   secret_from_stdin PLAY_SERVICE_ACCOUNT_JSON < "$PLAY_JSON"
 fi
 
@@ -68,7 +74,7 @@ shopt -s nullglob
 P8S=("$HOME"/.appstoreconnect/private_keys/AuthKey_*.p8)
 shopt -u nullglob
 P8="${P8S[0]:-}"
-if [[ ${#P8S[@]} -ne 1 ]]; then P8="$(ask "Path to AuthKey_XXXXXXXXXX.p8 (empty = skip)")"; fi
+if [[ ${#P8S[@]} -ne 1 ]]; then P8="$(ask_path "Path to AuthKey_XXXXXXXXXX.p8 (empty = skip)")"; fi
 if [[ -n "$P8" ]]; then
   KEY_ID="$(basename "$P8" .p8)"; KEY_ID="${KEY_ID#AuthKey_}"
   echo "key file: $P8 (key id $KEY_ID)"
