@@ -175,6 +175,10 @@ canonicalises to the landing page, signed-in areas are `noindex` (meta tag and `
 
 ## Before deploying
 
+Work through the [new project checklist](docs/NEW_PROJECT_CHECKLIST.md) first: branding beyond the landing page (auth
+pages, emails, icons), password manager friendly forms, a real mail provider, monitoring and SEO. These are the gaps a
+fresh project from this template still has.
+
 For every environment, set:
 
 - [ ] `JWT_SECRET` (long random value, unique per environment)
@@ -270,6 +274,7 @@ Then re-run the screenshot command (the feature graphic uses the foreground) and
 - [backend/README.md](backend/README.md)
 - [flutter_app/README.md](flutter_app/README.md)
 - [webapp/README.md](webapp/README.md)
+- [docs/NEW_PROJECT_CHECKLIST.md](docs/NEW_PROJECT_CHECKLIST.md): what to do after starting a project from the template
 - [docs/API_CONTRACT.md](docs/API_CONTRACT.md)
 - [docs/SECURITY.md](docs/SECURITY.md)
 - [docs/STORES.md](docs/STORES.md), [docs/RELEASING.md](docs/RELEASING.md), [docs/STORE_SUBMISSION.md](docs/STORE_SUBMISSION.md)
