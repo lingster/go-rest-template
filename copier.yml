@@ -7,6 +7,10 @@
 # --trust is required because the template runs that task.
 
 _min_copier_version: "9.0.0"
+_message_after_copy: |
+  Project created. Before the first public release, work through docs/NEW_PROJECT_CHECKLIST.md:
+  brand colours on every page and in the emails, password manager friendly forms, a real mail
+  provider (MAIL_DRIVER=console only logs the verification links), monitoring and SEO.
 _templates_suffix: .jinja
 _exclude:
   - copier.yml

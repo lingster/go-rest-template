@@ -494,7 +494,9 @@ def main(argv: list[str] | None = None, root: Path = ROOT, ask=prompt) -> int:
         "  3. Optional: Sign in with Google (disabled until GOOGLE_CLIENT_IDS is set), see README.\n"
         "  4. Replace the placeholder copy and images in backend/conf/landing.json (see README: Customise your landing page).\n"
         "  5. Store release (optional): edit the listing placeholders and see docs/STORES.md (README: ASO).\n"
-        "  6. git add -A && git commit -m 'chore: initialise project from template'"
+        "  6. Work through docs/NEW_PROJECT_CHECKLIST.md: brand colours on every page and in the emails, password\n"
+        "     manager friendly forms, a real mail provider, monitoring and SEO.\n"
+        "  7. git add -A && git commit -m 'chore: initialise project from template'"
     )
     return 0
 
