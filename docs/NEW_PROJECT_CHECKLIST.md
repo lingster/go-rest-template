@@ -65,10 +65,14 @@ nobody can finish signing up.
 - [ ] **Monitoring and alerts from day one**: an external probe of the public URL (and of the origin, to tell your
       outage from the CDN's), container up/restart/memory alerts, and app metrics on a `/metrics` that is not publicly
       routed. An outage nobody is told about lasts until someone happens to look.
-- [ ] **Memory limits with headroom, and a health check that restarts.** Docker marks a container unhealthy but never
-      restarts it; if a process can hang, run the container with `init: true` and let the health check stop it after a
-      few failures so the restart policy replaces it. A web server running `wrangler dev` in Docker needs about 700 MB
-      at rest: 512 MB gets OOM-killed. Prefer a production runtime over a dev server.
+- [ ] **Memory limits with headroom, and a health check that restarts.** Plain Docker and Compose mark a container
+      unhealthy but never restart it: the restart policy acts only when the main process exits, and a failing health
+      check (like the shipped `backend/main.go` one, which just exits 1) does not end it. If a process can hang, either
+      run under an orchestrator or watchdog that replaces unhealthy containers, or make the health check itself end the
+      main process: run the container with `init: true` (so PID 1 is tini, which exits with its child) and have the
+      check count consecutive failures and, after a few, send SIGTERM to PID 1; the restart policy then replaces the
+      container. Count only after the first success, so a slow start cannot loop. A web server running `wrangler dev`
+      in Docker needs about 700 MB at rest: 512 MB gets OOM-killed. Prefer a production runtime over a dev server.
 - [ ] **Backups off the host**, with a restore actually tested.
 - [ ] **Legal pages**: privacy policy, terms and a support page with a real contact address, linked from the footer
       and the app stores. Self-service account deletion (the stores require it).
